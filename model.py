@@ -7,7 +7,7 @@ plus the motor rotor and hub inertia and a smooth Stribeck friction law on both 
 State x = [theta, alpha, theta_dot, alpha_dot]:
   theta  arm angle about the upward vertical, counter-clockwise seen from above;
   alpha  pendulum angle about the arm's outward axis (right-hand rule), 0 = hanging down.
-Input u: motor torque on the arm [N m].
+Inputs: u, the motor torque on the arm [N m]; d, a disturbance torque on the pendulum's joint [N m], e.g. a tap.
 """
 import casadi as ca
 import numpy as np
@@ -18,6 +18,7 @@ q = ca.SX.sym("q", 2)                   # [theta, alpha]
 qd = ca.SX.sym("qd", 2)                 # [theta_dot, alpha_dot]
 x = ca.vertcat(q, qd)
 u = ca.SX.sym("u")
+d = ca.SX.sym("d")
 
 
 def _rot_z(a):
@@ -74,38 +75,39 @@ def friction(w, viscous, coulomb, breakaway, w_breakaway):
 
 
 def dynamics(with_friction):
-    """CasADi functions of the plant: xdot = f(x, u), and P(x, u) = [motor power, friction power loss].
+    """CasADi functions of the plant: xdot = f(x, u, d), and P(x, u, d) = [motor power, friction power loss,
+    disturbance power].
 
     Lagrange's equations d/dt(dL/dqd) - dL/dq = Q, solved for the accelerations:
     M(q) qdd = Q + dL/dq - (d/dq dL/dqd) qd, with the mass matrix M = d/dqd dL/dqd.
     """
     tau_f = (ca.vertcat(friction(qd[0], **c.FRICTION_ARM), friction(qd[1], **c.FRICTION_PEND))
              if with_friction else ca.DM.zeros(2))
-    Q = ca.vertcat(u, 0) - tau_f        # generalised forces
+    Q = ca.vertcat(u, d) - tau_f        # generalised forces
     dL_dqd = ca.gradient(L, qd)
     M = ca.jacobian(dL_dqd, qd)
     qdd = ca.solve(M, Q + ca.gradient(L, q) - ca.jacobian(dL_dqd, q) @ qd)
-    f = ca.Function("f", [x, u], [ca.vertcat(qd, qdd)])
-    P = ca.Function("P", [x, u], [ca.vertcat(u * qd[0], ca.dot(tau_f, qd))])
+    f = ca.Function("f", [x, u, d], [ca.vertcat(qd, qdd)])
+    P = ca.Function("P", [x, u, d], [ca.vertcat(u * qd[0], ca.dot(tau_f, qd), d * qd[1])])
     return f, P
 
 
 def rk4_step(f, P, dt, substeps):
-    """Builds step(x, u) -> (x after dt, [motor work, friction loss] over dt): `substeps` classical
-    Runge-Kutta 4 steps of length dt / substeps, with u held constant over the whole of dt.
+    """Builds step(x, u, d) -> (x after dt, [motor work, friction loss, disturbance work] over dt): `substeps`
+    classical Runge-Kutta 4 steps of length dt / substeps, with u and d held constant over the whole of dt.
 
-    Integrating the two powers alongside the state makes E(t) - E(0) = motor work - friction loss hold to
-    RK4 accuracy.
+    Integrating the three powers alongside the state makes E(t) - E(0) = motor work + disturbance work -
+    friction loss hold to RK4 accuracy.
     """
     def ode(z):
-        return ca.vertcat(f(z[:4], u), P(z[:4], u))
+        return ca.vertcat(f(z[:4], u, d), P(z[:4], u, d))
 
     h = dt / substeps
-    z = ca.vertcat(x, 0, 0)
+    z = ca.vertcat(x, 0, 0, 0)
     for _ in range(substeps):
         k1 = ode(z)
         k2 = ode(z + h / 2 * k1)
         k3 = ode(z + h / 2 * k2)
         k4 = ode(z + h * k3)
         z = z + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
-    return ca.Function("step", [x, u], [z[:4], z[4:]])
+    return ca.Function("step", [x, u, d], [z[:4], z[4:]])

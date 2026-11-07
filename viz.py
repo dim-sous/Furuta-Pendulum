@@ -20,10 +20,10 @@ import model
 matplotlib.rcParams["animation.ffmpeg_path"] = imageio_ffmpeg.get_ffmpeg_exe()   # no system ffmpeg: use the bundled one
 
 LIGHT = dict(surface="#fcfcfb", ink="#0b0b0b", muted="#898781", grid="#e1e0d9", axis="#c3c2b7",
-             arm="#2a78d6", pend="#eb6834", motor="#1baf7a", energy="#eda100", friction="#e87ba4",
+             arm="#2a78d6", pend="#eb6834", motor="#1baf7a", energy="#eda100", friction="#e87ba4", tap="#008300",
              critical="#d03b3b")
 DARK = dict(surface="#1a1a19", ink="#f0efec", muted="#898781", grid="#2c2c2a", axis="#383835",
-            arm="#3987e5", pend="#d95926", motor="#199e70", critical="#d03b3b")
+            arm="#3987e5", pend="#d95926", motor="#199e70", tap="#008300", critical="#d03b3b")
 
 
 def _style(ax, palette, fontsize):
@@ -50,11 +50,12 @@ def _flag(ax, palette, fontsize, failed_checks, width):
                      fontsize=fontsize, color=palette["critical"])
 
 
-def figure(path, title, controller, t, x, u, E, motor_work, friction_loss, residual, failed_checks):
-    """Arm and pendulum angles and rates, torque (labelled with the controller) and the energy balance
-    E(t) - E(0) = motor work - friction loss, against time, with any failed checks flagged at the top.
-    The arm and the pendulum get separate panels: the arm can drift by hundreds of degrees while the
-    pendulum moves by a few."""
+def figure(path, title, controller, t, x, u, d, E, motor_work, tap_work, friction_loss, residual, failed_checks):
+    """Arm and pendulum angles and rates, torques (the motor's, labelled with the controller, and any tap d on the
+    pendulum) and the energy balance E(t) - E(0) = motor work + tap work - friction loss, against time, with any
+    failed checks flagged at the top. The arm and the pendulum get separate panels: the arm can drift by hundreds
+    of degrees while the pendulum moves by a few."""
+    tapped = d.any()
     palette, fontsize, lw = LIGHT, 10, 1.5
     fig, ax = plt.subplots(6, 1, figsize=(10, 14), sharex=True, facecolor=palette["surface"], layout="constrained")
     for a in ax:
@@ -67,15 +68,21 @@ def figure(path, title, controller, t, x, u, E, motor_work, friction_loss, resid
     ax[2].set_ylabel("arm θ̇ [deg/s]")
     ax[3].plot(t, np.rad2deg(x[:, 3]), color=palette["pend"], lw=lw)
     ax[3].set_ylabel("pendulum α̇ [deg/s]")
-    ax[4].stairs(u, t, color=palette["motor"], lw=lw, baseline=None)
-    ax[4].set_ylabel("motor torque [N m]")
+    ax[4].stairs(u, t, color=palette["motor"], lw=lw, baseline=None, label="motor")
+    if tapped:
+        ax[4].stairs(d, t, color=palette["tap"], lw=lw, ls="--", baseline=None, label="tap on the pendulum")
+        _legend(ax[4], palette, fontsize, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    ax[4].set_ylabel("torque [N m]" if tapped else "motor torque [N m]")
     ax[4].set_title(controller, loc="left", fontsize=fontsize, color=palette["muted"])
     ax[5].plot(t, E - E[0], color=palette["energy"], lw=3 * lw, label="E(t) − E(0)")   # wide band: visible under the others
     ax[5].plot(t, motor_work, color=palette["motor"], lw=lw, label="motor work")
+    if tapped:
+        ax[5].plot(t, tap_work, color=palette["tap"], lw=lw, ls="--", label="tap work")
     ax[5].plot(t, -friction_loss, color=palette["friction"], lw=lw, label="− friction loss")
     ax[5].set_ylabel("energy [J]")
     ax[5].set_xlabel("time [s]")
-    ax[5].set_title(f"energy balance residual: max |E − E(0) − motor work + friction loss| = {residual:.1e} J",
+    balance = "E − E(0) − motor work" + (" − tap work" if tapped else "") + " + friction loss"
+    ax[5].set_title(f"energy balance residual: max |{balance}| = {residual:.1e} J",
                     loc="left", fontsize=fontsize, color=palette["muted"])
     _legend(ax[5], palette, fontsize, loc="upper left", bbox_to_anchor=(1.0, 1.0))
     _flag(ax[0], palette, fontsize, failed_checks, width=110)
@@ -84,10 +91,10 @@ def figure(path, title, controller, t, x, u, E, motor_work, friction_loss, resid
     plt.close(fig)
 
 
-def video(path, title, controller, t, x, u, failed_checks):
+def video(path, title, controller, t, x, u, d, failed_checks):
     """Real-time MP4: 3D view of the pendulum with a fading tip trail, over scrolling traces of the pendulum
-    angle (the 3D view shows the arm) and the torque (labelled with the controller); failed checks are flagged
-    above the traces."""
+    angle (the 3D view shows the arm) and the motor torque (labelled with the controller); a dashed line marks
+    the start of any tap d on the pendulum, and failed checks are flagged above the traces."""
     palette = DARK
     dt = t[1] - t[0]                                              # step of the run being drawn
     n_frames = int(round(t[-1] * c.VIDEO_FPS, 9)) + 1             # round first: 4.1 * 30 = 122.99999999999999
@@ -135,6 +142,11 @@ def video(path, title, controller, t, x, u, failed_checks):
     axu.set_ylabel("torque [N m]")
     axu.set_xlabel("time [s]")
     axu.set_title(controller, loc="left", fontsize=13, color=palette["muted"])
+    if d.any():
+        t_tap = t[np.flatnonzero(d)[0]]
+        for a in (axa, axu):
+            a.axvline(t_tap, color=palette["tap"], lw=1.5, ls="--")
+        axa.text(t_tap, axa.get_ylim()[1], " tap", color=palette["muted"], fontsize=13, va="top", clip_on=True)
     fig.text(0.04, 0.965, title, color=palette["ink"], fontsize=22)
     clock = fig.text(0.96, 0.965, "", color=palette["muted"], fontsize=18, ha="right")
 

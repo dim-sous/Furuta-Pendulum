@@ -64,10 +64,17 @@ SWING_UP = dict(k=50.0,                         # N m/J, torque per joule of mis
                 enter=deg(20),                  # rad from upright
                 leave=deg(45))                  # rad from upright
 
+# Disturbance: a tap on the pendulum, a torque pulse on its joint (not capped: it is not the controller), once the
+# swing-up has balanced the pendulum. One experiment per size, growing, to find the largest tap it recovers from.
+TAP = dict(t=5.0,                               # s, start
+           duration=0.02,                       # s, multiple of DT
+           sizes=[0.0025, 0.005, 0.01, 0.02, 0.04])   # N m
+
 # Experiments: x0 = [theta, alpha, theta_dot, alpha_dot]; alpha = 0 hanging down, +-pi upright.
 # Each experiment names its controller and that controller's settings:
 #   "open_loop": torque(t) [N m];   "pid": gains, a dict like PID_GAINS;
 #   "swing_up": gains (the PID's) and swing_up, a dict like SWING_UP.
+# Optional: disturbance(t) [N m], a torque on the pendulum's joint (zero if absent).
 EXPERIMENTS = {
     "frictionless_release": dict(x0=[0, deg(175), 0, 0], t_end=10.0, friction=False,
                                  controller="open_loop", torque=lambda t: 0.0),
@@ -84,6 +91,10 @@ EXPERIMENTS = {
     "pid_from_rest": dict(x0=[0, 0, 0, 0], t_end=10.0, friction=True, controller="pid", gains=PID_GAINS),
     "swing_up_from_rest": dict(x0=[0, 0, 0, 0], t_end=10.0, friction=True, controller="swing_up",
                                gains=PID_GAINS, swing_up=SWING_UP),
+    **{f"swing_up_tap_{1000 * size:g}mNm": dict(
+        x0=[0, 0, 0, 0], t_end=10.0, friction=True, controller="swing_up", gains=PID_GAINS, swing_up=SWING_UP,
+        disturbance=lambda t, size=size: size if TAP["t"] <= t < TAP["t"] + TAP["duration"] else 0.0)
+       for size in TAP["sizes"]},
 }
 RUN = ["pid_near_upright"] # list(EXPERIMENTS)
 
