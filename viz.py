@@ -128,6 +128,47 @@ def _estimation_panels(ax, palette, fontsize, lw, t, estimates):
                     color=palette["muted"])
 
 
+def friction_figure(path, t, u, x, torques, omega, k_mid, b, tau_c, true_friction, failed_checks):
+    """The friction identification (sysid.py): the torque staircase and the arm speed against time, with each
+    level's speed as measured from the encoder at the middle of its averaging window (samples k_mid); then the
+    friction curve: the measured points (omega, torques), the fitted b omega + tau_C sign(omega) and the truth's
+    true_friction(omega), over the whole range and zoomed to |omega| <= 1 rad/s."""
+    palette, fontsize, lw = LIGHT, 10, 1.5
+    fig, ax = plt.subplots(4, 1, figsize=(10, 15), facecolor=palette["surface"], layout="constrained")
+    for a in ax:
+        _style(a, palette, fontsize)
+    ax[0].stairs(u, t, color=palette["motor"], lw=lw, baseline=None)
+    ax[0].set_ylabel("motor torque [N m]")
+    ax[0].set_title("the experiment: constant torques, no controller", loc="left", fontsize=fontsize,
+                    color=palette["muted"])
+    ax[1].plot(t, x[:, 2], color=palette["arm"], lw=lw, label="true arm speed")
+    ax[1].plot(t[k_mid], omega, "o", color=palette["ink"], ms=4, label="measured from the encoder")
+    ax[1].set_ylabel("arm θ̇ [rad/s]")
+    ax[1].set_xlabel("time [s]")
+    ax[1].sharex(ax[0])
+    _legend(ax[1], palette, fontsize, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    for a, span in [(ax[2], 1.05 * np.max(np.abs(omega))), (ax[3], 1.0)]:
+        w = np.linspace(-span, span, 2001)
+        a.plot(w, [true_friction(wi) for wi in w], color=palette["friction"], lw=3 * lw, label="truth (Stribeck)")
+        for side in (w[w < 0], w[w > 0]):              # the fit jumps by 2 tau_C at 0: draw each side apart
+            a.plot(side, b * side + tau_c * np.sign(side), color=palette["ink"], lw=lw, ls="--",
+                   label="fit: b ω + τ_C sign ω" if side[0] > 0 else None)
+        inside = np.abs(omega) <= span
+        a.plot(omega[inside], torques[inside], "o", color=palette["arm"], ms=5, label="measured points")
+        a.set_xlabel("arm speed ω [rad/s]")
+        a.set_ylabel("friction torque [N m]")
+        _legend(a, palette, fontsize, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    ax[2].set_title(f"friction curve: b = {b:.4e} N m s/rad, τ_C = {tau_c:.4e} N m", loc="left", fontsize=fontsize,
+                    color=palette["muted"])
+    ax[3].set_title("zoom: low speeds, where viscous + Coulomb cannot follow the Stribeck peak", loc="left",
+                    fontsize=fontsize, color=palette["muted"])
+    ax[3].set_ylim(-1.5 * np.max(np.abs(torques[np.abs(omega) <= 1.0])), 1.5 * np.max(np.abs(torques[np.abs(omega) <= 1.0])))
+    _flag(ax[0], palette, fontsize, failed_checks, width=110)
+    fig.suptitle("friction identification, step 1: steady states", color=palette["ink"], fontsize=13)
+    fig.savefig(path, dpi=150, facecolor=palette["surface"])
+    plt.close(fig)
+
+
 def video(path, title, controller, t, x, u, d, failed_checks):
     """Real-time MP4: 3D view of the pendulum with a fading tip trail, over scrolling traces of the pendulum
     angle (the 3D view shows the arm) and the motor torque (labelled with the controller); a dashed line marks
