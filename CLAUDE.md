@@ -27,7 +27,7 @@ an increment is done, show its results (plots, key numbers) and ask what comes n
 
 ## Layout
 
-Flat files in the project root. A file is created only when the work needs it.
+Flat files in the project root (media/ is the one folder in git). A file is created only when the work needs it.
 
 ```
 config.py    every parameter and setting: plant, MAX_TORQUE, PID gains, TUNE, SWING_UP, EXPERIMENTS (named test
@@ -38,7 +38,16 @@ control.py   controllers (open_loop, pid, swing_up), chosen per experiment; pid_
 run.py       simulation loop per experiment, checks, key numbers
 tune.py      PID gain tuning: IPOPT on the closed loop rolled out in CasADi; prints gains to paste
 viz.py       figures (PNG) and videos (MP4), written to results/<controller>/ (gitignored)
+README.md    orients a visitor: what it is, how to install, run and check it, layout, limitations, license
+METHODS.md   model, numerics, each controller's law, with references (public)
+FINDINGS.md  our log: exercises, then dated results and investigations (private: gitignored, untracked)
+media/       the README's GIF (committed; results/ is not)
+LICENSE      MIT
 ```
+
+Results, sweeps and investigations go to FINDINGS.md with the date and their conditions, never to the
+README (user, 2026-11-07). README.md changes only when what the project is or how to use it changes;
+METHODS.md when a method changes.
 
 ## Commands
 
