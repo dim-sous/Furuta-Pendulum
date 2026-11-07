@@ -49,7 +49,6 @@ def swing_frequency():
 
 def main():
     out = Path(c.RESULTS_DIR)
-    out.mkdir(exist_ok=True)
     print(f"small-swing frequency about hanging down, arm free: {swing_frequency():.3f} Hz")
     failed_runs = []
     for name in c.RUN:
@@ -87,8 +86,10 @@ def main():
             print(f"  CHECK FAILED: {message}")
         title = (f"{name.replace('_', ' ')}: θ0 = {np.rad2deg(e['x0'][0]):.0f}°, α0 = {np.rad2deg(e['x0'][1]):.0f}°, "
                  f"friction {'on' if e['friction'] else 'off'}")
-        viz.figure(out / f"{name}.png", title, label, t, x, u, E, motor_work, friction_loss, residual, failed_checks)
-        viz.video(out / f"{name}.mp4", title, label, t, x, u, failed_checks)
+        folder = out / e["controller"]                     # one folder per controller
+        folder.mkdir(parents=True, exist_ok=True)
+        viz.figure(folder / f"{name}.png", title, label, t, x, u, E, motor_work, friction_loss, residual, failed_checks)
+        viz.video(folder / f"{name}.mp4", title, label, t, x, u, failed_checks)
         if failed_checks:
             failed_runs.append(name)
     if failed_runs:
