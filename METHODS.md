@@ -23,20 +23,20 @@ $I_{p,zz}, I_{p,yy}, I_{p,xx}$ here.
 ### Kinematics
 
 Two rotations place each body: the arm frame is $R_a = R_z(\theta)$ (x along the arm, z up) and the pendulum
-frame is $R_p = R_z(\theta)\,R_x(\alpha)$, with the pendulum along its $-z$ axis. The centres of mass are
+frame is $R_p = R_z(\theta)\thinspace R_x(\alpha)$, with the pendulum along its $-z$ axis. The centres of mass are
 
-$$
+```math
 r_a = R_a \begin{bmatrix} d_a \\ 0 \\ 0 \end{bmatrix},\qquad
 r_p = R_a \begin{bmatrix} L_a \\ 0 \\ 0 \end{bmatrix} + R_p \begin{bmatrix} 0 \\ 0 \\ -d_p \end{bmatrix},
-$$
+```
 
 their velocities are $v = \frac{\partial r}{\partial q}\dot q$ with $q = [\theta,\ \alpha]$, and the angular
 velocities in body axes follow from $[\omega]_\times = R^\top \dot R$ [3]:
 
-$$
+```math
 \omega_a = \begin{bmatrix} 0 \\ 0 \\ \dot\theta \end{bmatrix},\qquad
 \omega_p = \begin{bmatrix} \dot\alpha \\ \dot\theta \sin\alpha \\ \dot\theta \cos\alpha \end{bmatrix}.
-$$
+```
 
 `model.py` writes exactly these definitions and lets CasADi [2] differentiate them; nothing below was
 expanded by hand in the code.
@@ -46,38 +46,38 @@ expanded by hand in the code.
 Each body contributes translational energy of its centre of mass plus rotational energy about it, with its
 full inertia tensor $I$ (about the centre of mass, in body axes) [3]. The motor rotor and hub add $J_m$:
 
-$$
+```math
 T = \tfrac12 J_m \dot\theta^2
   + \tfrac12 m_a \lVert v_a\rVert^2 + \tfrac12\, \omega_a^\top I_a\, \omega_a
   + \tfrac12 m_p \lVert v_p\rVert^2 + \tfrac12\, \omega_p^\top I_p\, \omega_p,
 \qquad
 V = -m_p\, g\, d_p \cos\alpha .
-$$
+```
 
 Lagrange's equations with generalised forces [3],
 
-$$
+```math
 \frac{d}{dt}\frac{\partial L}{\partial \dot q} - \frac{\partial L}{\partial q} = Q,\qquad L = T - V,\qquad
 Q = \begin{bmatrix} u - \tau_a(\dot\theta) \\ d - \tau_p(\dot\alpha) \end{bmatrix},
-$$
+```
 
 where $\tau_a$ and $\tau_p$ are the friction torques of the arm and pendulum joints and $d$ is a disturbance
 torque on the pendulum's joint, zero except in the tap experiments (section 6). Expanding the time
-derivative gives $M(q)\,\ddot q = Q + \frac{\partial L}{\partial q} - \frac{\partial^2 L}{\partial \dot q\,\partial q}\,\dot q$
+derivative gives $M(q)\thinspace \ddot q = Q + \frac{\partial L}{\partial q} - \frac{\partial^2 L}{\partial \dot q\thinspace \partial q}\thinspace \dot q$
 with the mass matrix $M = \frac{\partial^2 L}{\partial \dot q^2}$; `model.dynamics` solves this for
 $\ddot q$. Written out, the result is
 
-$$
+```math
 \begin{aligned}
 &\big(J_0 + (m_p d_p^2 + I_{p,yy})\sin^2\alpha + I_{p,zz}\cos^2\alpha\big)\,\ddot\theta
- + m_p L_a d_p \cos\alpha\;\ddot\alpha \\
-&\qquad + (m_p d_p^2 + I_{p,yy} - I_{p,zz})\sin 2\alpha\;\dot\theta\dot\alpha
+ + m_p L_a d_p \cos\alpha\;\ddot\alpha
+\\ &\qquad + (m_p d_p^2 + I_{p,yy} - I_{p,zz})\sin 2\alpha\;\dot\theta\dot\alpha
  - m_p L_a d_p \sin\alpha\;\dot\alpha^2 = u - \tau_a(\dot\theta), \\[4pt]
 &m_p L_a d_p \cos\alpha\;\ddot\theta + (I_{p,xx} + m_p d_p^2)\,\ddot\alpha
  - \tfrac12 (m_p d_p^2 + I_{p,yy} - I_{p,zz})\sin 2\alpha\;\dot\theta^2
  + m_p g d_p \sin\alpha = d - \tau_p(\dot\alpha),
 \end{aligned}
-$$
+```
 
 with $J_0 = J_m + I_{a,zz} + m_a d_a^2 + m_p L_a^2$. This is Cazzolato & Prime's full model, their eq. (19) [1],
 plus the rotor and hub inertia and friction. They point out that most published Furuta models drop the
@@ -89,17 +89,17 @@ QUBE workbook model [9] drops them too. They are kept here.
 Both joints use the smooth Stribeck law of the MathWorks Simscape "Rotational Friction" block [4], the block
 Quanser used to model the QUBE-Servo 2 motor [5]:
 
-$$
+```math
 \tau(\omega) = \sqrt{2e}\,(\tau_{brk} - \tau_C)\, e^{-(\omega/\omega_{St})^2}\, \frac{\omega}{\omega_{St}}
  + \tau_C \tanh\!\Big(\frac{\omega}{\omega_C}\Big) + b\,\omega,
 \qquad \omega_{St} = \sqrt2\,\omega_{brk},\quad \omega_C = \omega_{brk}/10 .
-$$
+```
 
 In plain terms: viscous drag $b\omega$, a Coulomb level $\tau_C$ reached smoothly within about $\omega_C$,
 and a Stribeck term that lifts the Coulomb level to $\tau_{brk}$ at speed $\omega_{brk}$. With the arm's values,
-$b\,\omega_{brk}$ = 1e-4 N m is as large as that lift, so the total arm friction still rises monotonically with
+$b\thinspace \omega_{brk}$ = 1e-4 N m is as large as that lift, so the total arm friction still rises monotonically with
 speed; the pendulum's friction is purely viscous. The law is smooth everywhere, and it dissipates
-($\tau(\omega)\,\omega \ge 0$) whenever $\tau_{brk} \ge \tau_C \ge 0$ and $b \ge 0$, as here.
+($\tau(\omega)\thinspace \omega \ge 0$) whenever $\tau_{brk} \ge \tau_C \ge 0$ and $b \ge 0$, as here.
 
 ### Parameters
 
@@ -128,7 +128,7 @@ formula for a rod pivoted at its centre. Friction values in circulation differ b
 - Torque input: the motor's electrical dynamics and back-EMF are not modelled, so zero torque means a freely
   spinning motor. On the real rig, 0 V shorts the motor and brakes the arm (about 2.1e-4 N m s/rad).
 - The plant itself has no torque limit. Every controller's torque is capped at `MAX_TORQUE` = 0.05 N m, about
-  what the motor gives at 10 V ($k_t \cdot 10\,\text{V}/R_m$), so all controllers compete under the same rule;
+  what the motor gives at 10 V ($k_t \cdot 10\thinspace \text{V}/R_m$), so all controllers compete under the same rule;
   the open-loop experiments stay at or below 0.02 N m.
 - Quanser's 2016 product sheet [10] gives the pendulum as 9.5 cm pivot-to-tip, against 0.129 m in the
   manual [6]; Quanser's parameter file [7] uses 0.129 m, as here.
@@ -143,10 +143,10 @@ setting and the RK4 step a numerical one: refining the RK4 step leaves the held 
 The energy check rests on an exact identity. Multiplying Lagrange's equations by $\dot q^\top$, and using that
 $T$ is quadratic in $\dot q$ and $V$ depends on $q$ only, gives [3]
 
-$$
+```math
 \frac{d}{dt}(T + V) = \dot q^\top Q = u\,\dot\theta + d\,\dot\alpha - \tau_a(\dot\theta)\,\dot\theta
  - \tau_p(\dot\alpha)\,\dot\alpha .
-$$
+```
 
 `model.rk4_step` integrates the motor power $u\dot\theta$, the disturbance power $d\dot\alpha$ and the friction
 power alongside the state, so $E(t) - E(0) - (\text{motor work}) - (\text{tap work}) + (\text{friction loss})$ is
@@ -158,25 +158,25 @@ is the classic check that energy is conserved. With friction and torque on, it a
 how $u$ or the friction torques enter the equations of motion. It cannot catch a sign error inside the
 friction law itself, because that changes the equations and the integrated power together. A second check
 covers that case: the friction loss must never decrease, since each RK4 increment of it is a positive
-combination of $\tau(\omega)\,\omega \ge 0$ terms.
+combination of $\tau(\omega)\thinspace \omega \ge 0$ terms.
 
 ## 3. PID control
 
 Two PIDs, summed: one holds the pendulum upright, the other holds the arm at $\theta = 0$. Every 1 ms (`DT`)
 the controller reads the state and sets a torque that is held until the next sample:
 
-$$
+```math
 \begin{aligned}
-e_k &= \operatorname{wrap}(\pi - \alpha_k),\qquad e_{a,k} = \operatorname{wrap}(0 - \theta_k)\qquad \in [-\pi, \pi), \\
-v_k &= K_p\, e_k - K_d\, \dot\alpha_k + K_{p,a}\, e_{a,k} - K_{d,a}\, \dot\theta_k + I_k,
- \qquad u_k = \operatorname{sat}_{u_{max}}(v_k), \\
-I_{k+1} &= I_k + (K_i\, e_k + K_{i,a}\, e_{a,k})\,\Delta t
+e_k &= \mathrm{wrap}(\pi - \alpha_k),\qquad e_{a,k} = \mathrm{wrap}(0 - \theta_k)\qquad \in [-\pi, \pi),
+\\ v_k &= K_p\, e_k - K_d\, \dot\alpha_k + K_{p,a}\, e_{a,k} - K_{d,a}\, \dot\theta_k + I_k,
+ \qquad u_k = \mathrm{sat}_{u_{max}}(v_k),
+\\ I_{k+1} &= I_k + (K_i\, e_k + K_{i,a}\, e_{a,k})\,\Delta t
  \quad\text{unless } u_k \text{ is capped and that increment would push it further into the cap.}
 \end{aligned}
-$$
+```
 
 $I$ is the integral term of both loops in one state, in N m; below the cap it equals
-$K_i \sum e\,\Delta t + K_{i,a} \sum e_a\,\Delta t$ exactly.
+$K_i \sum e\thinspace \Delta t + K_{i,a} \sum e_a\thinspace \Delta t$ exactly.
 
 With the arm gains at 0 this is the pendulum-only PID. The arm error is wrapped too, so a whole turn of the arm
 counts as none.
@@ -205,10 +205,10 @@ counts as none.
 a horizon $T$ = 3 s with exactly the plant, RK4 sub-steps, held torque and PID formula of the experiments
 (`control.pid_step` serves both). The tuner minimizes
 
-$$
+```math
 J = \sum_i \sum_k \left[ \left(\frac{e_k}{e_{max}}\right)^2 + \left(\frac{e_{a,k}}{\theta_{max}}\right)^2
  + \left(\frac{u_k}{u_{max}}\right)^2 \right] \Delta t ,
-$$
+```
 
 an integral of squared errors and torque in which each term is divided by its largest acceptable value
 (Bryson's rule [16]): $e_{max}$ = 5°, $\theta_{max}$ = 30°, $u_{max}$ = 0.05 N m, the real motor's limit at
@@ -239,17 +239,17 @@ A PID only holds the pendulum near upright; from hanging down it has to be swung
 hand over to the PID of section 3 (`control.swing_up`, settings `config.SWING_UP`). The pendulum's energy about
 its pivot is
 
-$$
+```math
 E = \tfrac12 J_{pivot}\,\dot\alpha^2 + m_p g d_p (1 - \cos\alpha),\qquad J_{pivot} = I_{p,xx} + m_p d_p^2 ,
-$$
+```
 
 0 hanging at rest and $E_{up} = 2 m_p g d_p$ = 30.4 mJ upright. From the pendulum row of the equations of motion,
-the arm drives it as $\dot E = -m_p L_a d_p \cos\alpha\,\dot\alpha\,\ddot\theta$ plus terms in the arm's speed. A
-torque that accelerates the arm against the sign of $\cos\alpha\,\dot\alpha$ therefore adds energy:
+the arm drives it as $\dot E = -m_p L_a d_p \cos\alpha\thinspace \dot\alpha\thinspace \ddot\theta$ plus terms in the arm's speed. A
+torque that accelerates the arm against the sign of $\cos\alpha\thinspace \dot\alpha$ therefore adds energy:
 
-$$
-u = -\operatorname{sat}_{u_{max}}\!\big(k\,(E_{up} - E)\,\operatorname{sign}(\dot\alpha\cos\alpha)\big).
-$$
+```math
+u = -\mathrm{sat}_{u_{max}}\!\big(k\,(E_{up} - E)\,\mathrm{sign}(\dot\alpha\cos\alpha)\big).
+```
 
 - **Torque form.** [17] commands the arm's acceleration; here the torque itself follows the same switching
   structure. The direction of energy pumping is exact; its rate is set by $k$.
@@ -260,14 +260,14 @@ $$
   beyond 45°, so a missed catch is retried. The gap matters: while catching, the PID lets the pendulum overshoot
   briefly to 28°–35° from upright, and with one 20° line that overshoot handed control back mid-catch. The
   PID's integral restarts at 0 at each hand-over.
-- **From exact rest** $\dot\alpha = 0$, so the law would give no torque; $\operatorname{sign}(0)$ is taken as
+- **From exact rest** $\dot\alpha = 0$, so the law would give no torque; $\mathrm{sign}(0)$ is taken as
   +1, so the swing-up starts by itself.
 
 ## 6. Disturbance: a tap on the pendulum
 
 Once the swing-up has balanced the pendulum, a tap hits it: a torque pulse $d$ on the pendulum's joint lasting
 20 ms from $t$ = 5 s (`config.TAP`), one experiment per size, `swing_up_tap_<size>mNm`. The tap is not capped, as
-it is not the controller; its work $\int d\,\dot\alpha\,dt$ enters the energy balance of section 2.
+it is not the controller; its work $\int d\thinspace \dot\alpha\thinspace dt$ enters the energy balance of section 2.
 
 ## 7. State estimation: an EKF on the encoder angles
 
@@ -275,7 +275,7 @@ The rig measures only the two angles, with optical encoders of 2048 counts per r
 experiments with `state="ekf"` the controller sees an extended Kalman filter's estimate made from those readings,
 instead of the true state (`estimator.py`, settings `config.EKF`).
 
-**The encoders.** A reading is each angle rounded to whole counts, $y = \Delta\,\mathrm{round}([\theta, \alpha]/\Delta)$
+**The encoders.** A reading is each angle rounded to whole counts, $y = \Delta\thinspace \mathrm{round}([\theta, \alpha]/\Delta)$
 with $\Delta = 2\pi/2048$ = 3.07e-3 rad (0.176°), zero where the model's angles are zero (a calibrated encoder).
 There is no other noise: optical encoders have none to speak of.
 
@@ -283,31 +283,31 @@ There is no other noise: optical encoders have none to speak of.
 keeps its Coulomb and Stribeck terms (the least known part of the plant: published values differ by up to
 300×), so the filter never has the truth's model. Unmodelled torques are white noise $w$ on the two joints:
 
-$$
+```math
 \dot x = f(x, u, 0) + L(x)\,w, \qquad L = \begin{bmatrix} \dfrac{\partial f}{\partial u} & \dfrac{\partial f}{\partial d} \end{bmatrix},
 \qquad E[w(t)\,w(s)^T] = Q_c\,\delta(t - s),
-$$
+```
 
 so $w$ enters exactly as the motor torque and a tap do, and $Q_c = \mathrm{diag}(q_{arm}, q_{pend})$ has units
-(N m)² s. The first guess is the dropped Coulomb torque held for one sample: $q = (10^{-4}\ \text{N m})^2\,\Delta t$
+(N m)² s. The first guess is the dropped Coulomb torque held for one sample: $q = (10^{-4}\ \text{N m})^2\thinspace \Delta t$
 per joint. A constant torque $\tau$ over $\Delta t$ gives an impulse of variance $(\tau\Delta t)^2$, and white noise of
-intensity $q$ gives $q\,\Delta t$. Measurement: $y = H x + v$, $H = [I\ \ 0]$, with $v$ of covariance
-$R = (\Delta^2/12)\,I$, the variance of a quantization error spread uniformly over one count [19, §4.2].
+intensity $q$ gives $q\thinspace \Delta t$. Measurement: $y = H x + v$, $H = [I\ \ 0]$, with $v$ of covariance
+$R = (\Delta^2/12)\thinspace I$, the variance of a quantization error spread uniformly over one count [19, §4.2].
 
 **Predict** (continuous-discrete EKF [18, Alg. 10.24]). Between samples the estimate and its covariance follow
 
-$$
+```math
 \dot{\hat x} = f(\hat x, u, 0), \qquad \dot P = A P + P A^T + L Q_c L^T, \qquad A = \frac{\partial f}{\partial x}(\hat x, u, 0),
-$$
+```
 
 integrated together by the same RK4 sub-steps as the plant (section 2), with $u$ held. CasADi gives $A$ and $L$
 exactly [2].
 
 **Update.** With the innovation $\nu = y - H\hat x^-$ and $S = H P^- H^T + R$:
 
-$$
+```math
 K = P^- H^T S^{-1}, \qquad \hat x = \hat x^- + K\nu, \qquad P = (I - KH)\,P^-(I - KH)^T + K R K^T ,
-$$
+```
 
 the covariance in Joseph form [20, ch. 5], symmetric and positive definite by construction.
 
