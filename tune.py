@@ -39,7 +39,7 @@ def rollout(jit_dir):
     u, integral, errors = control.pid_step(z[:4], z[4], gains, c.DT, T["cap"])
     cost = ((errors[0] / T["max_pendulum_error"]) ** 2 + (errors[1] / T["max_arm_error"]) ** 2
             + (u / T["max_torque"]) ** 2) * c.DT
-    sample = ca.Function("sample", [z, gains], [ca.vertcat(step(z[:4], u)[0], integral, z[5] + cost)],
+    sample = ca.Function("sample", [z, gains], [ca.vertcat(step(z[:4], u, 0)[0], integral, z[5] + cost)],
                          {"jit": True, "compiler": "shell", "jit_options": {"flags": ["-O2"], "directory": jit_dir}})
     return sample.fold(n)
 
