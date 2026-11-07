@@ -249,8 +249,9 @@ frequency builds the swing up to about ±27°, where friction removes per cycle 
 - Rigid bodies; uniform rods; the pendulum has no inertia about its own long axis.
 - Torque input: the motor's electrical dynamics and back-EMF are not modelled, so zero torque means a freely
   spinning motor. On the real rig, 0 V shorts the motor and brakes the arm (about 2.1e-4 N m s/rad).
-- No torque limit is enforced. At 10 V the motor stalls at about 0.05 N m ($k_t \cdot 10\,\text{V}/R_m$); the
-  open-loop experiments stay at or below 0.02 N m, and the PID of section 2 is not limited either.
+- The plant itself has no torque limit. Every controller's torque is capped at `MAX_TORQUE` = 0.05 N m, about
+  what the motor gives at 10 V ($k_t \cdot 10\,\text{V}/R_m$), so all controllers compete under the same rule;
+  the open-loop experiments stay at or below 0.02 N m.
 - Quanser's 2016 product sheet [10] gives the pendulum as 9.5 cm pivot-to-tip, against 0.129 m in the
   manual [6]; Quanser's parameter file [7] uses 0.129 m, as here.
 
@@ -263,17 +264,20 @@ the controller reads the state and sets a torque that is held until the next sam
 
 $$
 \begin{aligned}
-e_k &= \operatorname{wrap}(\pi - \alpha_k) \in [-\pi, \pi), &
-I_{k+1} &= I_k + e_k\,\Delta t, \\
-e_{a,k} &= 0 - \theta_k, &
-I_{a,k+1} &= I_{a,k} + e_{a,k}\,\Delta t, \\
-u_k &= K_p\, e_k + K_i\, I_k - K_d\, \dot\alpha_k
- + K_{p,a}\, e_{a,k} + K_{i,a}\, I_{a,k} - K_{d,a}\, \dot\theta_k . &&
+e_k &= \operatorname{wrap}(\pi - \alpha_k),\qquad e_{a,k} = \operatorname{wrap}(0 - \theta_k)\qquad \in [-\pi, \pi), \\
+v_k &= K_p\, e_k - K_d\, \dot\alpha_k + K_{p,a}\, e_{a,k} - K_{d,a}\, \dot\theta_k + I_k,
+ \qquad u_k = \operatorname{sat}_{u_{max}}(v_k), \\
+I_{k+1} &= I_k + (K_i\, e_k + K_{i,a}\, e_{a,k})\,\Delta t
+ \quad\text{unless } u_k \text{ is capped and that increment would push it further into the cap.}
 \end{aligned}
 $$
 
-With the arm gains at 0 this is the pendulum-only PID. The arm error is not wrapped: whole turns of the arm
-count.
+$I$ is the integral term of both loops in one state, in N m; below the cap it equals
+$K_i \sum e\,\Delta t + K_{i,a} \sum e_a\,\Delta t$ exactly.
+
+With the arm gains at 0 this is the pendulum-only PID. The arm error is wrapped too, so a whole turn of the arm
+counts as none. It was not wrapped before the swing-up (section 3), and in runs where the arm stays within ±180°
+the two give the same results.
 
 - The error is measured from upright and wrapped, so the controller always takes the shorter way up. It is
   Quanser's balance angle, $\alpha \bmod 2\pi - \pi$ [9, Rotary Pendulum Modeling lab, eq. (1.1)], with the sign
@@ -282,11 +286,13 @@ count.
 - The D terms act on the measured rates $\dot\alpha$, $\dot\theta$ rather than on the errors' derivatives, i.e.
   setpoint weight $\gamma = 0$ in [11, eq. (11.15)]. For the pendulum the two agree except at the wrap's $2\pi$
   jump, where $\dot e$ would be an impulse.
-- The integrals are the forward-Euler sums of the standard computer implementation [11, eq. (11.17)],
-  [12, eq. (13.7)]. They have no anti-windup term, because nothing saturates.
+- The integral is the forward-Euler sum of the standard computer implementation [11, eq. (11.17)],
+  [12, eq. (13.7)]. Against windup it uses conditional integration [12, §3.5]: while the torque sits at the cap,
+  increments that would push it further are dropped. Back-calculation [11, §11.4] was tried first; with the
+  tuned integral gains ≈ 0 it left a stuck torque offset, and the arm settled up to 147° from home.
 - The controller reads the exact simulated state: no encoder quantization, noise or rate filter.
-- The torque is not limited. For scale, the real motor delivers at most 0.050 N m at the recommended 10 V and
-  0.075 N m at its 15 V maximum [6, §2.2.4 and Table 2.2].
+- The torque is capped at $u_{max}$ = `MAX_TORQUE` = 0.050 N m, what the real motor delivers at the recommended
+  10 V (0.075 N m at its 15 V maximum) [6, §2.2.4 and Table 2.2].
 - The gains are set by hand in `config.PID_GAINS` ($K_p$ in N m/rad, $K_i$ in N m/(rad s), $K_d$ in N m s/rad;
   the arm gains `*_arm` in the same units). The pendulum gains started from $K_p = K_i = K_d = 1$, the arm gains
   from 0. Quanser's own pendulum controllers sample at 500 Hz [13]; here `DT` is 1 ms.
@@ -303,7 +309,7 @@ the pendulum up from rest hanging down and catch it.
 
 ### Results with the starting gains ($K_p = K_i = K_d = 1$)
 
-Both runs blow up within 20 ms; their plots end at the blow-up.
+These runs predate the torque cap. Both blow up within 20 ms; their plots end at the blow-up.
 
 - **PID near upright.** The torque flips sign at every sample and grows about 2.4× per sample: 0.18, −0.39,
   0.98, −2.3, 5.7 N m, … The state stops being finite at t = 0.018 s.
@@ -326,7 +332,9 @@ $$
 
 an integral of squared errors and torque in which each term is divided by its largest acceptable value
 (Bryson's rule [16]): $e_{max}$ = 5°, $\theta_{max}$ = 30°, $u_{max}$ = 0.05 N m, the real motor's limit at
-10 V [6]. Torque is penalized, not limited, as the plant has no torque limit.
+10 V [6]. The tuning loop leaves out the torque cap (`TUNE["cap"]` = ∞): with the cap in the loop the
+optimizer returns meaningless gains (in the thousands, chasing bang-bang control). Torque is only penalized,
+and the tuned gains are then checked with the cap, as the experiments run them.
 
 **The method.** CasADi builds the simulation symbolically, so $J$ has exact derivatives [2], and IPOPT [14]
 minimizes it with a limited-memory BFGS Hessian [15]. The unknowns are the gains divided by the current
@@ -349,7 +357,7 @@ the hand-tuned first guess catches 165°–175° but blows up from 160°, where 
 | arm | −0.0739 | −0.000454 | −0.0302 |
 
 The optimizer drops the pendulum's integral: with the arm fed back, the arm loop supplies the steady torque
-against arm friction. Run for 10 s from rest with the arm at 0:
+against arm friction. Run for 10 s from rest with the arm at 0, without the cap (as tuned):
 
 | $\alpha_0$ | max $\lvert\alpha - 180°\rvert$ | final $\lvert\alpha - 180°\rvert$ | final $\theta$ | peak $\lvert u\rvert$ |
 |---|---|---|---|---|
@@ -359,9 +367,69 @@ against arm friction. Run for 10 s from rest with the arm at 0:
 | 170° | 10.0° | 0.000° | −0.04° | 0.118 N m |
 | 175° | 5.0° | 0.000° | −0.02° | 0.059 N m |
 
-So the gains catch from up to 30° off upright (150° and 155° were not tuned for), with the arm back within 0.1°.
-Two caveats: every start beyond 5° needs more torque than the real motor's 0.05 N m (up to 7× at 150°), and the
-gains are tuned and tested on the same model, so this is a best case; the real rig differs.
+Without the cap the gains catch from up to 30° off upright, but every start beyond 5° needs more than the
+motor's 0.05 N m. **With the cap**, as the experiments run them, they catch from 160° to 175° (up to 20° off
+upright), with the arm back within 0.1° and the torque at most 0.05 N m; from 155° outward the pendulum falls.
+The gains are tuned and tested on the same model, so this is a best case; the real rig differs.
+
+## 3. Swing-up by energy control
+
+### The controller
+
+A PID only holds the pendulum near upright; from hanging down it has to be swung up first. The swing-up follows
+Åström & Furuta [17]: pump energy into the pendulum until it has exactly what it needs to reach upright, then
+hand over to the PID of section 2 (`control.swing_up`, settings `config.SWING_UP`). The pendulum's energy about
+its pivot is
+
+$$
+E = \tfrac12 J_{pivot}\,\dot\alpha^2 + m_p g d_p (1 - \cos\alpha),\qquad J_{pivot} = I_{p,xx} + m_p d_p^2 ,
+$$
+
+0 hanging at rest and $E_{up} = 2 m_p g d_p$ = 30.4 mJ upright. From the pendulum row of the equations of motion,
+the arm drives it as $\dot E = -m_p L_a d_p \cos\alpha\,\dot\alpha\,\ddot\theta$ plus terms in the arm's speed. A
+torque that accelerates the arm against the sign of $\cos\alpha\,\dot\alpha$ therefore adds energy:
+
+$$
+u = -\operatorname{sat}_{u_{max}}\!\big(k\,(E_{up} - E)\,\operatorname{sign}(\dot\alpha\cos\alpha)\big).
+$$
+
+- **Torque form.** [17] commands the arm's acceleration; here the torque itself follows the same switching
+  structure. The direction of energy pumping is exact; its rate is set by $k$.
+- **Saturation.** The whole controller, PID included, is capped at $u_{max}$ = `MAX_TORQUE` = 0.05 N m;
+  $k$ = 50 N m/J, so the law runs mostly at the cap (bang-bang) and eases off as $E \to E_{up}$.
+- **Hand-over, with hysteresis.** The PID takes over when the pendulum comes within 20° of upright, as in
+  Quanser's swing-up lab [9, Swing-Up Control lab, eq. (1.6)], and hands back to the swing-up only if it falls
+  beyond 45°, so a missed catch is retried. The gap matters: while catching, the PID lets the pendulum overshoot
+  briefly to 28°–35° from upright, and with one 20° line that overshoot handed control back mid-catch. The
+  PID's integral restarts at 0 at each hand-over.
+- **From exact rest** $\dot\alpha = 0$, so the law would give no torque; $\operatorname{sign}(0)$ is taken as
+  +1, so the swing-up starts by itself.
+
+### Results
+
+**Swing-up from rest** ([video](results/swing_up/swing_up_from_rest.mp4)): one swing out to +100° builds enough
+energy for the pendulum to go over to −180°, where the PID catches it at about 1 s; it stays within 2° of upright
+from 1.5 s on. The arm ends one full turn round (−360°), which the wrapped arm error counts as home. The swing-up
+stays within 0.05 N m and the catch needs at most about 0.035 N m, so neither the cap nor the hysteresis
+changes this run. Energy balance residual 1.4e-13 J.
+
+![swing-up from rest](results/swing_up/swing_up_from_rest.png)
+
+**How robust it is.** Time until the pendulum stays within 2° of upright, from rest over 15 s, with the
+whole controller capped at 0.05 N m ("not up": never stays up):
+
+| $k$ [N m/J] | 5 | 10 | 20 | 50 | 100 | 200 |
+|---|---|---|---|---|---|---|
+| one 20° line | not up | not up | 1.4 s | 1.5 s | 1.9 s | 1.9 s |
+| 20° in, 45° out | not up | not up | 1.4 s | 1.5 s | 1.5 s | 1.5 s |
+
+Without the hysteresis, $k$ = 100 and 200 need a second attempt. At $k$ = 5 and 10 the pumping is too weak:
+the swing settles with its closest approach 49° and 25° short of upright.
+
+With $k$ = 50, on plants that differ from the one the controller assumes (it keeps the nominal pendulum for its
+energy): up within 1.3–2.0 s with the pendulum or the arm 30% lighter or heavier, the pendulum 9.5 cm (the
+product sheet's value [10]) or 10% longer, and friction ×0.3. With friction ×3 it never gets up (cause not
+investigated).
 
 ## References
 
@@ -380,13 +448,14 @@ gains are tuned and tested on the same model, so this is a best case; the real r
 8. E. Hairer, S. P. Nørsett, G. Wanner, *Solving Ordinary Differential Equations I: Nonstiff Problems*,
    2nd ed., Springer, 1993, §II.1.
 9. J. Apkarian, M. Lévis, *Student Workbook: QUBE-Servo Experiment for MATLAB/Simulink Users*, v2.0, Quanser,
-   2014: State Space Modeling lab, eqs. (1.1)–(1.2); Rotary Pendulum Modeling lab, eq. (1.1); Optimal LQR
-   Control lab.
+   2014: State Space Modeling lab, eqs. (1.1)–(1.2); Rotary Pendulum Modeling lab, eq. (1.1); Swing-Up Control
+   lab, eq. (1.6); Optimal LQR Control lab.
 10. Quanser, *QUBE-Servo 2 Product Information Sheet*, v1.0, 2016.
 11. K. J. Åström, R. M. Murray, *Feedback Systems: An Introduction for Scientists and Engineers*, 2nd ed.,
     Princeton University Press, 2021. Section and equation numbers from the authors' electronic edition, PID
     chapter v3.0j (2019): §11.5, eqs. (11.15) and (11.17).
-12. K. J. Åström, T. Hägglund, *Advanced PID Control*, ISA, 2006, §13.3, eq. (13.7).
+12. K. J. Åström, T. Hägglund, *Advanced PID Control*, ISA, 2006: §3.5 (conditional integration, pp. 84–85);
+    §13.3, eq. (13.7).
 13. Quanser, Quanser_Academic_Resources (GitHub, branch dev-windows): the Qube-Servo 3 pendulum control models
     in `6_teaching/1_Controls/Qube_Servo_3/sp6_pendulum_control/` (fixed step 0.002 s), and
     `0_libraries/python/pal/products/qube.py` (class `QubeServo2`, default 500 Hz).
@@ -395,3 +464,4 @@ gains are tuned and tested on the same model, so this is a best case; the real r
 15. J. Nocedal, S. J. Wright, *Numerical Optimization*, 2nd ed., Springer, 2006, §7.2.
 16. A. E. Bryson, Y.-C. Ho, *Applied Optimal Control*, Hemisphere, 1975 (the rule of choosing quadratic-cost
     weights as 1/(largest acceptable value)²; page not verified).
+17. K. J. Åström, K. Furuta, "Swinging up a pendulum by energy control", *Automatica* 36(2), 287–295, 2000.

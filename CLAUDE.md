@@ -8,7 +8,7 @@ Where this file and that doc disagree, this file wins: it records the user's lat
 ## Scope
 
 Current: first-principles model, open-loop simulations, PID control (pendulum and arm loops, summed) with gains
-tuned by optimization, plots, videos.
+tuned by optimization, swing-up by energy control handing over to the PID, plots, videos.
 Nothing else.
 
 Work grows in increments the user picks. The doc's stage order ("work through the stages in order") does
@@ -29,10 +29,10 @@ an increment is done, show its results (plots, key numbers) and ask what comes n
 Flat files in the project root. A file is created only when the work needs it.
 
 ```
-config.py    every parameter and setting: plant, PID gains, TUNE, EXPERIMENTS (named test matrix; each names
-             its controller and that controller's settings) + RUN, output
+config.py    every parameter and setting: plant, MAX_TORQUE, PID gains, TUNE, SWING_UP, EXPERIMENTS (named test
+             matrix; each names its controller and that controller's settings) + RUN, output
 model.py     plant: kinematics -> Lagrangian -> equations of motion (CasADi), friction, RK4 step
-control.py   controllers (open_loop, pid), chosen per experiment; pid_step, the PID formula as a CasADi
+control.py   controllers (open_loop, pid, swing_up), chosen per experiment; pid_step, the PID formula as a CasADi
              function, shared by the simulation and the tuner
 run.py       simulation loop per experiment, checks, key numbers
 tune.py      PID gain tuning: IPOPT on the closed loop rolled out in CasADi; prints gains to paste
@@ -50,6 +50,8 @@ uv add <package>         add a library, only when a feature first needs it
 ## Conventions
 
 - SI units, angles in radians; plots and videos show degrees.
+- Every controller's torque is capped at config.MAX_TORQUE (0.05 N m, the real motor at 10 V): controllers are
+  compared as complete controllers under the same rules (user, 2026-11-07). The plant itself has no limit.
 - State x = [theta, alpha, theta_dot, alpha_dot], alpha = 0 hanging down: the angle conventions of
   Cazzolato & Prime (2011), whose eq. (19) the model reproduces (pendulum body axes differ: x = pivot
   axis, z = rod). Input u = motor torque on the arm.
