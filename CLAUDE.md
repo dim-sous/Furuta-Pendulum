@@ -8,7 +8,8 @@ Where this file and that doc disagree, this file wins: it records the user's lat
 ## Scope
 
 Current: first-principles model, open-loop simulations, PID control (pendulum and arm loops, summed) with gains
-tuned by optimization, swing-up by energy control handing over to the PID, plots, videos.
+tuned by optimization, swing-up by energy control handing over to the PID, disturbance (tap) experiments,
+plots, videos.
 Nothing else.
 
 Work grows in increments the user picks. The doc's stage order ("work through the stages in order") does
@@ -54,10 +55,10 @@ uv add <package>         add a library, only when a feature first needs it
   compared as complete controllers under the same rules (user, 2026-11-07). The plant itself has no limit.
 - State x = [theta, alpha, theta_dot, alpha_dot], alpha = 0 hanging down: the angle conventions of
   Cazzolato & Prime (2011), whose eq. (19) the model reproduces (pendulum body axes differ: x = pivot
-  axis, z = rod). Input u = motor torque on the arm.
+  axis, z = rod). Inputs: u = motor torque on the arm; d = disturbance torque on the pendulum's joint (a tap).
 - The input is held constant over each sample period DT (zero-order hold); RK4 integrates each period in
   RK4_SUBSTEPS steps. DT is physical (the controller's sample period), the RK4 step numerical.
-- Every run checks that the state stays finite, that E(t) - E(0) = motor work - friction loss within
+- Every run checks that the state stays finite, that E(t) - E(0) = motor work + tap work - friction loss within
   config.ENERGY_TOL, and that the friction loss never decreases. A failed check does not stop anything (the
   user's choice, 2026-11-06: the plots are how they debug): it is printed with what it means, written in red
   on the run's figure and video, and run.py ends listing the failed runs (exit status 1). A run whose state

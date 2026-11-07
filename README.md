@@ -97,10 +97,11 @@ Lagrange's equations with generalised forces [3],
 
 $$
 \frac{d}{dt}\frac{\partial L}{\partial \dot q} - \frac{\partial L}{\partial q} = Q,\qquad L = T - V,\qquad
-Q = \begin{bmatrix} u - \tau_a(\dot\theta) \\ -\tau_p(\dot\alpha) \end{bmatrix},
+Q = \begin{bmatrix} u - \tau_a(\dot\theta) \\ d - \tau_p(\dot\alpha) \end{bmatrix},
 $$
 
-where $\tau_a$ and $\tau_p$ are the friction torques of the arm and pendulum joints. Expanding the time
+where $\tau_a$ and $\tau_p$ are the friction torques of the arm and pendulum joints and $d$ is a disturbance
+torque on the pendulum's joint, zero except in the tap experiments of section 4. Expanding the time
 derivative gives $M(q)\,\ddot q = Q + \frac{\partial L}{\partial q} - \frac{\partial^2 L}{\partial \dot q\,\partial q}\,\dot q$
 with the mass matrix $M = \frac{\partial^2 L}{\partial \dot q^2}$; `model.dynamics` solves this for
 $\ddot q$. Written out, the result is
@@ -113,7 +114,7 @@ $$
  - m_p L_a d_p \sin\alpha\;\dot\alpha^2 = u - \tau_a(\dot\theta), \\[4pt]
 &m_p L_a d_p \cos\alpha\;\ddot\theta + (I_{p,xx} + m_p d_p^2)\,\ddot\alpha
  - \tfrac12 (m_p d_p^2 + I_{p,yy} - I_{p,zz})\sin 2\alpha\;\dot\theta^2
- + m_p g d_p \sin\alpha = -\tau_p(\dot\alpha),
+ + m_p g d_p \sin\alpha = d - \tau_p(\dot\alpha),
 \end{aligned}
 $$
 
@@ -171,11 +172,13 @@ The energy check rests on an exact identity. Multiplying Lagrange's equations by
 $T$ is quadratic in $\dot q$ and $V$ depends on $q$ only, gives [3]
 
 $$
-\frac{d}{dt}(T + V) = \dot q^\top Q = u\,\dot\theta - \tau_a(\dot\theta)\,\dot\theta - \tau_p(\dot\alpha)\,\dot\alpha .
+\frac{d}{dt}(T + V) = \dot q^\top Q = u\,\dot\theta + d\,\dot\alpha - \tau_a(\dot\theta)\,\dot\theta
+ - \tau_p(\dot\alpha)\,\dot\alpha .
 $$
 
-`model.rk4_step` integrates the motor power $u\dot\theta$ and the friction power alongside the state, so
-$E(t) - E(0) - (\text{motor work}) + (\text{friction loss})$ is zero up to RK4's truncation error. Every run
+`model.rk4_step` integrates the motor power $u\dot\theta$, the disturbance power $d\dot\alpha$ and the friction
+power alongside the state, so $E(t) - E(0) - (\text{motor work}) - (\text{tap work}) + (\text{friction loss})$ is
+zero up to RK4's truncation error. Every run
 is flagged if its state stops being finite (an unstable closed loop can blow up; the plots then end there) or
 if this residual exceeds `ENERGY_TOL` = 1e-6 J. A flag does not stop anything: it is printed, written in red
 on the run's figure and video, and `run.py` ends by listing the flagged runs. With friction off and $u = 0$ this
@@ -430,6 +433,31 @@ With $k$ = 50, on plants that differ from the one the controller assumes (it kee
 energy): up within 1.3–2.0 s with the pendulum or the arm 30% lighter or heavier, the pendulum 9.5 cm (the
 product sheet's value [10]) or 10% longer, and friction ×0.3. With friction ×3 it never gets up (cause not
 investigated).
+
+## 4. Disturbance: a tap on the pendulum
+
+Once the swing-up has balanced the pendulum, a tap hits it: a torque pulse $d$ on the pendulum's joint lasting
+20 ms from $t$ = 5 s (`config.TAP`). The tap is not capped, as it is not the controller. One experiment per size,
+`swing_up_tap_<size>mNm`; each tap's work enters the energy balance, which holds to 1.4e-13 J in every run.
+
+| Tap | Pendulum swings out to | Leaves the 45° window? | Back within 2° of upright | Arm swings by |
+|---|---|---|---|---|
+| 2.5 mN m | 1.3° | no | stays within 2° | 3.5° |
+| 5 mN m | 2.6° | no | 0.15 s after the tap | 6.9° |
+| 10 mN m | 5.2° | no | 0.25 s after | 13.6° |
+| 20 mN m | 10.9° | no | 0.34 s after | 29.7° |
+| 40 mN m | 180° (falls) | yes | 1.27 s after | 363° (a full turn) |
+
+Up to 20 mN m the PID absorbs the tap on its own. At 40 mN m the pendulum is knocked over: it falls out of the
+window, the swing-up takes back over and brings it up again a full turn round, which the wrapped errors count
+as home. Halving the interval between 20 and 40 mN m, the PID alone holds up to 32.5 mN m (the pendulum swings
+out to 25°) and is knocked over from 32.8 mN m.
+
+With the swing-up behind the PID, every tap tried was recovered, up to 640 mN m, which spins the pendulum at
+7,400°/s, upright again within 1.7 s in each case (15 s runs): above upright energy the swing-up's law pushes
+energy out, and the PID catches it on the way.
+
+![tap of 40 mN m](results/swing_up/swing_up_tap_40mNm.png)
 
 ## References
 
