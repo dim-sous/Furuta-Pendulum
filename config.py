@@ -33,6 +33,10 @@ DT = 1e-3                               # s, controller sample period; the torqu
 RK4_SUBSTEPS = 4                        # RK4 steps per sample period: integration step DT / RK4_SUBSTEPS
 ENERGY_TOL = 1e-6                       # J, largest allowed |E(t) - E(0) - motor work + friction loss|
 
+# Every controller's torque is capped at MAX_TORQUE, the real motor's limit at 10 V [6]: controllers are compared
+# under the same rule.
+MAX_TORQUE = 0.05                       # N m
+
 # PID on the pendulum angle plus PID on the arm angle (target 0), summed; gains set by hand or by tune.py.
 # Kp [N m/rad], Ki [N m/(rad s)], Kd [N m s/rad]; the *_arm gains have the same units.
 PID_GAINS = dict(Kp_pendulum=0.673346, Ki_pendulum=5.97908e-10, Kd_pendulum=0.0450316, Kp_arm=-0.0738805, Ki_arm=-0.000453746, Kd_arm=-0.0302108)
@@ -47,14 +51,23 @@ TUNE = dict(starts=deg([175, 170, 165, 160]),
             friction=True,
             max_pendulum_error=deg(5),          # rad
             max_arm_error=deg(30),              # rad
-            max_torque=0.05,                    # N m, the real motor's limit at 10 V [6]
+            max_torque=MAX_TORQUE,              # N m
+            cap=float("inf"),                   # N m, torque cap inside the tuning loop: none (see tune.py)
             max_iter=200,                       # IPOPT iterations per stage
             check_starts=deg([140, 145, 150, 155, 160, 165, 170, 175]),
             check_t_end=10.0)                   # s
 
+# Swing-up by energy control (Astrom & Furuta 2000 [17]), its torque capped at MAX_TORQUE. The PID takes over
+# within `enter` of upright [9] and hands back only beyond `leave` (hysteresis), so the PID's own overshoot while
+# catching does not cut it off.
+SWING_UP = dict(k=50.0,                         # N m/J, torque per joule of missing pendulum energy
+                enter=deg(20),                  # rad from upright
+                leave=deg(45))                  # rad from upright
+
 # Experiments: x0 = [theta, alpha, theta_dot, alpha_dot]; alpha = 0 hanging down, +-pi upright.
 # Each experiment names its controller and that controller's settings:
-#   "open_loop": torque(t) [N m];   "pid": gains, a dict like PID_GAINS.
+#   "open_loop": torque(t) [N m];   "pid": gains, a dict like PID_GAINS;
+#   "swing_up": gains (the PID's) and swing_up, a dict like SWING_UP.
 EXPERIMENTS = {
     "frictionless_release": dict(x0=[0, deg(175), 0, 0], t_end=10.0, friction=False,
                                  controller="open_loop", torque=lambda t: 0.0),
@@ -69,6 +82,8 @@ EXPERIMENTS = {
                              torque=lambda t: 0.004 * sin(2 * pi * 2.06 * t)),   # 2.06 Hz: small-swing frequency
     "pid_near_upright": dict(x0=[0, deg(170), 0, 0], t_end=10.0, friction=True, controller="pid", gains=PID_GAINS),
     "pid_from_rest": dict(x0=[0, 0, 0, 0], t_end=10.0, friction=True, controller="pid", gains=PID_GAINS),
+    "swing_up_from_rest": dict(x0=[0, 0, 0, 0], t_end=10.0, friction=True, controller="swing_up",
+                               gains=PID_GAINS, swing_up=SWING_UP),
 }
 RUN = ["pid_near_upright"] # list(EXPERIMENTS)
 
