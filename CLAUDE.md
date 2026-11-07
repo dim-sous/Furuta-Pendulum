@@ -9,7 +9,8 @@ Where this file and that doc disagree, this file wins: it records the user's lat
 
 Current: first-principles model, open-loop simulations, PID control (pendulum and arm loops, summed) with gains
 tuned by optimization, swing-up by energy control handing over to the PID, disturbance (tap) experiments,
-an EKF on the quantized encoder angles that the controller can see instead of the true state, plots, videos.
+an EKF on the quantized encoder angles that the controller can see instead of the true state, friction
+identification (step 1: steady-state friction curve by least squares), plots, videos.
 Nothing else.
 
 Work grows in increments the user picks. The doc's stage order ("work through the stages in order") does
@@ -30,7 +31,7 @@ an increment is done, show its results (plots, key numbers) and ask what comes n
 Flat files in the project root (media/ is the one folder in git). A file is created only when the work needs it.
 
 ```
-config.py    every parameter and setting: plant, MAX_TORQUE, PID gains, TUNE, SWING_UP, ENCODER_RESOLUTION, EKF,
+config.py    every parameter and setting: plant, MAX_TORQUE, PID gains, TUNE, SWING_UP, ENCODER_RESOLUTION, EKF, SYSID,
              EXPERIMENTS (named test matrix; each names its controller and that controller's settings, and what
              the controller sees: the true state or the EKF's estimate) + RUN, output
 model.py     plant: kinematics -> Lagrangian -> equations of motion (CasADi), friction, RK4 step
@@ -40,6 +41,7 @@ estimator.py continuous-discrete EKF on the encoder angles (its model: viscous f
              conditions on the count cell (truncated bivariate normal, Owen's T)
 run.py       simulation loop per experiment, encoder, checks (incl. the EKF surprise check), NEES, key numbers
 tune.py      PID gain tuning: IPOPT on the closed loop rolled out in CasADi; prints gains to paste
+sysid.py     friction identification: torque staircase, speeds from encoder counts, least-squares fit
 viz.py       figures (PNG) and videos (MP4), written to results/<controller>/ (gitignored)
 README.md    orients a visitor: what it is, how to install, run and check it, layout, limitations, license
 METHODS.md   model, numerics, each controller's law, with references (public)
@@ -57,6 +59,7 @@ METHODS.md when a method changes.
 ```
 uv run python run.py     run the experiments in config.RUN
 uv run python tune.py    tune the PID gains (needs gcc: one closed-loop sample is JIT-compiled)
+uv run python sysid.py   identify the arm's friction (a 20-minute simulated experiment, about 2 minutes)
 uv add <package>         add a library, only when a feature first needs it
 ```
 

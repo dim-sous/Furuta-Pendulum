@@ -90,6 +90,15 @@ EKF = dict(friction_arm=dict(FRICTION_ARM, coulomb=0.0, breakaway=0.0),
            P0_std=[ENCODER_RESOLUTION / 12**0.5] * 2 + [1.0, 1.0],   # rad, rad, rad/s, rad/s
            min_cell_prob=1e-6)
 
+# Friction identification, step 1 (sysid.py): from rest, with no controller, the motor torque steps through
+# `levels` log-spaced magnitudes per direction, run monotonically from -torque_max to +torque_max as in Quanser's own
+# test [5], so each step starts near the previous steady state. Each level is held for `wait` s to settle, then the
+# arm speed is measured from encoder counts over `average` s. At steady state the torque equals the arm's friction
+# at that speed, and linear least squares fits viscous + Coulomb friction to the points.
+SYSID = dict(torque_min=3e-4, torque_max=3e-2,  # N m: steady speeds from about 0.1 to 30 rad/s
+             levels=20,                         # per direction
+             wait=20.0, average=10.0)           # s, multiples of DT
+
 # Experiments: x0 = [theta, alpha, theta_dot, alpha_dot]; alpha = 0 hanging down, +-pi upright.
 # Each experiment names its controller and that controller's settings:
 #   "open_loop": torque(t) [N m];   "pid": gains, a dict like PID_GAINS;

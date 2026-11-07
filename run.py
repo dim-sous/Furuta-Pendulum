@@ -55,6 +55,21 @@ def simulate(x0, t_end, controller, with_friction, dt, substeps, disturbance=lam
     return t, x, u, work[:, 0], work[:, 1], d, work[:, 2], estimates
 
 
+def energy_checks(x, motor_work, tap_work, friction_loss):
+    """The energy E(t) of states x, the energy balance residual max |E - E(0) - motor work - tap work + friction
+    loss|, and the messages of whichever checks fail: the balance holds within c.ENERGY_TOL, and friction never
+    adds energy."""
+    E = np.asarray(model.energy.map(len(x))(x.T)).ravel()
+    residual = np.max(np.abs(E - E[0] - motor_work - tap_work + friction_loss))
+    failed = []
+    if not residual <= c.ENERGY_TOL:  # written as 'not <=' so that a NaN fails too
+        failed.append(f"energy balance off by {residual:.1e} J (tolerance {c.ENERGY_TOL:.0e} J): "
+                      "RK4 too coarse for this run, try a larger RK4_SUBSTEPS")
+    if np.any(np.diff(friction_loss) < 0):  # each RK4 increment is a sum of tau_f * qd >= 0
+        failed.append("friction added energy instead of removing it: the friction law is wrong")
+    return E, residual, failed
+
+
 def consistency(x, estimates):
     """The estimates with their error x_hat - x against the true states x added, and the consistency test of
     [20, sec. 5.4]: NEES = e^T P^-1 e at each sample, chi-square with 4 degrees of freedom if the filter's
@@ -124,14 +139,9 @@ def main():
             d, tap_work = d[:k - 1], tap_work[:k]
             if estimates:
                 estimates = {key: value[:k - 1] for key, value in estimates.items()}
-        E = np.asarray(model.energy.map(len(t))(x.T)).ravel()
-        residual = np.max(np.abs(E - E[0] - motor_work - tap_work + friction_loss))
-        # After a blow-up the last samples are too large for these two checks to mean anything.
-        if finite.all() and not residual <= c.ENERGY_TOL:  # written as 'not <=' so that a NaN fails too
-            failed_checks.append(f"energy balance off by {residual:.1e} J (tolerance {c.ENERGY_TOL:.0e} J): "
-                                 "RK4 too coarse for this run, try a larger RK4_SUBSTEPS")
-        if finite.all() and np.any(np.diff(friction_loss) < 0):  # each RK4 increment is a sum of tau_f * qd >= 0
-            failed_checks.append("friction added energy instead of removing it: the friction law is wrong")
+        E, residual, energy_failed = energy_checks(x, motor_work, tap_work, friction_loss)
+        if finite.all():  # after a blow-up the last samples are too large for these checks to mean anything
+            failed_checks += energy_failed
         if estimates:
             cell_prob = estimates["cell_prob"][1:]                  # the first sample has no update
             if not np.all(cell_prob >= c.EKF["min_cell_prob"]):    # written so that a NaN fails too

@@ -355,6 +355,51 @@ whose belief is a single Gaussian shares this; the established exact remedies ca
 (particle filters, set-membership bounds) or change the measurement (updates at the instants a count edge is
 crossed).
 
+## 8. Friction identification, step 1: the steady-state friction curve
+
+`sysid.py` (settings `config.SYSID`) estimates the arm's friction from data the rig could record, its encoder
+readings and the commanded torque, the way Quanser measured the real motor's friction [5].
+
+**The idea.** The arm's equation of motion reads $J\thinspace \dot\omega = u - \tau_f(\omega) - \tau_{pend}$, with $\tau_{pend}$
+the torque the pendulum exerts on the arm. Hold $u$ constant and wait: the arm settles at a constant speed and
+the pendulum settles too, so arm and pendulum turn as one rigid body at constant speed, $\tau_{pend} = 0$, and
+
+```math
+u = \tau_f(\omega) .
+```
+
+Each torque level gives one point of the friction curve. Above
+$\omega = \sqrt{m_p g d_p / (m_p d_p^2 + I_{p,yy})}$ = 10.7 rad/s, hanging straight down stops being stable and the
+pendulum settles on a cone instead, with $\cos\alpha = m_p g d_p / ((m_p d_p^2 + I_{p,yy})\thinspace\omega^2)$ (derived from the
+equations of motion of section 1); the reduction to $u = \tau_f(\omega)$ still holds there.
+
+**The experiment.** From rest, with no controller, the torque steps through 20 log-spaced magnitudes per
+direction, from 3e-4 to 3e-2 N m (steady speeds from about 0.1 to 30 rad/s), ordered from $-u_{max}$ to $+u_{max}$
+as in Quanser's test [5], so that each step starts near the previous steady state. Each level is held for 20 s,
+then the speed is measured over the next 10 s from the arm's encoder alone:
+$\hat\omega = (y_\theta(t_2) - y_\theta(t_1))/(t_2 - t_1)$, in error by at most one count per window, 3.1e-4 rad/s.
+
+**Checks**, reported like `run.py`'s: the energy balance of section 2, and steady state, i.e. the speeds over the
+averaging window's two halves agree within their resolution.
+
+**The fit.** Viscous + Coulomb friction, $\tau_f(\omega) = b\thinspace\omega + \tau_C\thinspace\mathrm{sign}(\omega)$, is linear in
+$\theta = (b, \tau_C)$, so linear least squares gives it in closed form [26, §7.3]:
+
+```math
+\hat\theta = (\Phi^T \Phi)^{-1} \Phi^T U, \qquad \Phi = \begin{bmatrix} \hat\omega_i & \mathrm{sign}(\hat\omega_i) \end{bmatrix}_{i=1..N},
+\qquad U = [u_i]_{i=1..N},
+```
+
+with the standard error estimate $\lambda (\Phi^T\Phi)^{-1}$, $\lambda = |U - \Phi\hat\theta|^2/(N-2)$ [26, App. II]. That estimate
+assumes white residuals; here they are mostly model error, so the actual error can be larger.
+
+**The model class does not contain the truth.** The simulated truth has the smooth Stribeck law of section 1.
+Above about 0.4 rad/s it equals viscous + Coulomb (its Stribeck term has died out), but below that it rises to
+a breakaway peak that a straight line plus a step cannot follow. Where the experiment puts its points decides
+how that mismatch spreads into $\hat b$ and $\hat\tau_C$. Static least squares is the prediction-error method with a
+predictor that has no dynamics, and maximum likelihood for i.i.d. Gaussian errors [26, §7.2–7.4]; step 2 will
+use the transients too.
+
 ## References
 
 1. B. S. Cazzolato, Z. Prime, "On the dynamics of the Furuta pendulum", *Journal of Control Science and
@@ -410,3 +455,5 @@ crossed).
     Information Theory* 16(2), 152–161, 1970.
 25. S. Särkkä, *Bayesian Filtering and Smoothing*, Cambridge University Press, 2013, Appendix A.1, Lemma A.2,
     eqs. (A.4)–(A.5) (the conditional distribution of jointly Gaussian variables).
+26. L. Ljung, *System Identification: Theory for the User*, 2nd ed., Prentice Hall, 1999: §7.2–7.4 (prediction-error
+    methods, linear regression and least squares, p. 203; maximum likelihood, p. 212), Appendix II (pp. 543, 551).
