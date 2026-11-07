@@ -9,7 +9,7 @@ Where this file and that doc disagree, this file wins: it records the user's lat
 
 Current: first-principles model, open-loop simulations, PID control (pendulum and arm loops, summed) with gains
 tuned by optimization, swing-up by energy control handing over to the PID, disturbance (tap) experiments,
-plots, videos.
+an EKF on the quantized encoder angles that the controller can see instead of the true state, plots, videos.
 Nothing else.
 
 Work grows in increments the user picks. The doc's stage order ("work through the stages in order") does
@@ -30,12 +30,14 @@ an increment is done, show its results (plots, key numbers) and ask what comes n
 Flat files in the project root (media/ is the one folder in git). A file is created only when the work needs it.
 
 ```
-config.py    every parameter and setting: plant, MAX_TORQUE, PID gains, TUNE, SWING_UP, EXPERIMENTS (named test
-             matrix; each names its controller and that controller's settings) + RUN, output
+config.py    every parameter and setting: plant, MAX_TORQUE, PID gains, TUNE, SWING_UP, ENCODER_RESOLUTION, EKF,
+             EXPERIMENTS (named test matrix; each names its controller and that controller's settings, and what
+             the controller sees: the true state or the EKF's estimate) + RUN, output
 model.py     plant: kinematics -> Lagrangian -> equations of motion (CasADi), friction, RK4 step
 control.py   controllers (open_loop, pid, swing_up), chosen per experiment; pid_step, the PID formula as a CasADi
              function, shared by the simulation and the tuner
-run.py       simulation loop per experiment, checks, key numbers
+estimator.py continuous-discrete EKF on the encoder angles (its model: viscous friction only)
+run.py       simulation loop per experiment, encoder, checks, EKF consistency (NEES/NIS), key numbers
 tune.py      PID gain tuning: IPOPT on the closed loop rolled out in CasADi; prints gains to paste
 viz.py       figures (PNG) and videos (MP4), written to results/<controller>/ (gitignored)
 README.md    orients a visitor: what it is, how to install, run and check it, layout, limitations, license

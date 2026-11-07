@@ -20,6 +20,8 @@ freely at the arm's tip. Everything is built from the physics up:
   simulated closed loop; energy-based swing-up (Åström & Furuta 2000) handing over to the PID. Every controller
   is capped at 0.05 N m, the real motor at 10 V.
 - **Disturbances.** A short torque pulse (a tap) on the pendulum while it balances.
+- **Sensing.** The encoders' angles, rounded to whole counts, feed an extended Kalman filter whose estimate
+  the controller can use instead of the true state; each experiment chooses.
 
 The equations, parameters, controller laws and their sources are in [METHODS.md](METHODS.md).
 
@@ -66,6 +68,7 @@ and video, and `run.py` ends by listing the failed runs, with exit status 1. The
 | `config.py` | every parameter and setting: plant, torque cap, PID gains, tuning, swing-up, experiments |
 | `model.py` | the plant: kinematics, Lagrangian, equations of motion, friction, RK4 step |
 | `control.py` | controllers (`open_loop`, `pid`, `swing_up`) and the PID law shared with the tuner |
+| `estimator.py` | the extended Kalman filter on the encoder angles |
 | `run.py` | simulation loop, checks, key numbers |
 | `tune.py` | PID gain tuning by optimization |
 | `viz.py` | figures and videos |
@@ -75,7 +78,7 @@ and video, and `run.py` ends by listing the failed runs, with exit status 1. The
 ## Limitations
 
 - Simulation only; no hardware.
-- The controllers see the true state: no sensor noise, encoder quantization or state estimation.
+- The encoders are ideal apart from their resolution: no electrical noise, missed counts or delay.
 - The motor is a pure torque source: its electrical dynamics and back-EMF are not modelled.
 - The pendulum joint has viscous friction only; Quanser publishes no Coulomb value for it.
 
