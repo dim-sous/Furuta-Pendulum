@@ -70,7 +70,7 @@ TAP = dict(t=5.0,                               # s, start
            duration=0.02,                       # s, multiple of DT
            sizes=[0.0025, 0.005, 0.01, 0.02, 0.04])   # N m
 
-# Encoders on both joints: 2048 counts per revolution in quadrature [22]. A reading is the angle rounded to whole
+# Encoders on both joints: 2048 counts per revolution in quadrature [21]. A reading is the angle rounded to whole
 # counts, zero where the model's angles are zero (a calibrated encoder).
 ENCODER_RESOLUTION = 2 * pi / 2048      # rad per count
 
@@ -78,14 +78,17 @@ ENCODER_RESOLUTION = 2 * pi / 2048      # rad per count
 # Kalman filter (estimator.py) [18]. Its model is the plant's with viscous friction only, while the truth keeps
 # the Coulomb and Stribeck terms, so the filter never has the truth's model. Process noise: white torque noise on
 # the arm's and the pendulum's joints, entering as the motor torque and the tap do, of intensity Q_c per joint;
-# first guess (1e-4 N m)^2 * DT, the dropped Coulomb torque held over one sample, then tuned by hand by NEES/NIS
-# [21]. Measurement noise: the quantization's variance, resolution^2 / 12 per angle [19]. The filter starts from
-# the first reading with zero velocities, uncertain by P0_std.
+# first guess (1e-4 N m)^2 * DT = 1e-11, the dropped Coulomb torque held over one sample; tuned by hand by NEES
+# [20] to 1e4 times that, the smallest value scanned at which the filter keeps the pendulum (2026-11-07). Measurement: a reading says the angles lie in its count cell, and the update conditions on that cell
+# [22-25]; a run fails a check when a reading's cell has probability below min_cell_prob under the filter's
+# belief (a big surprise, where the update's moments also start losing accuracy). The filter starts from the first
+# reading with zero velocities, uncertain by P0_std (the angles: a uniform spread over one count, std
+# resolution / sqrt(12) [19]).
 EKF = dict(friction_arm=dict(FRICTION_ARM, coulomb=0.0, breakaway=0.0),
            friction_pend=dict(FRICTION_PEND, coulomb=0.0, breakaway=0.0),
-           Q_c=[1e-11, 1e-11],                  # (N m)^2 s, arm joint, pendulum joint
-           R=[ENCODER_RESOLUTION**2 / 12] * 2,  # rad^2, theta, alpha
-           P0_std=[ENCODER_RESOLUTION / 12**0.5] * 2 + [1.0, 1.0])   # rad, rad, rad/s, rad/s
+           Q_c=[1e-7, 1e-7],                    # (N m)^2 s, arm joint, pendulum joint
+           P0_std=[ENCODER_RESOLUTION / 12**0.5] * 2 + [1.0, 1.0],   # rad, rad, rad/s, rad/s
+           min_cell_prob=1e-6)
 
 # Experiments: x0 = [theta, alpha, theta_dot, alpha_dot]; alpha = 0 hanging down, +-pi upright.
 # Each experiment names its controller and that controller's settings:

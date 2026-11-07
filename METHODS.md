@@ -271,7 +271,7 @@ it is not the controller; its work $\int d\thinspace \dot\alpha\thinspace dt$ en
 
 ## 7. State estimation: an EKF on the encoder angles
 
-The rig measures only the two angles, with optical encoders of 2048 counts per revolution in quadrature [22]. In
+The rig measures only the two angles, with optical encoders of 2048 counts per revolution in quadrature [21]. In
 experiments with `state="ekf"` the controller sees an extended Kalman filter's estimate made from those readings,
 instead of the true state (`estimator.py`, settings `config.EKF`).
 
@@ -289,10 +289,11 @@ keeps its Coulomb and Stribeck terms (the least known part of the plant: publish
 ```
 
 so $w$ enters exactly as the motor torque and a tap do, and $Q_c = \mathrm{diag}(q_{arm}, q_{pend})$ has units
-(N m)² s. The first guess is the dropped Coulomb torque held for one sample: $q = (10^{-4}\ \text{N m})^2\thinspace \Delta t$
-per joint. A constant torque $\tau$ over $\Delta t$ gives an impulse of variance $(\tau\Delta t)^2$, and white noise of
-intensity $q$ gives $q\thinspace \Delta t$. Measurement: $y = H x + v$, $H = [I\ \ 0]$, with $v$ of covariance
-$R = (\Delta^2/12)\thinspace I$, the variance of a quantization error spread uniformly over one count [19, §4.2].
+(N m)² s. The first guess was the dropped Coulomb torque held for one sample, $q = (10^{-4}\ \text{N m})^2\thinspace \Delta t$
+= 1e-11 per joint: a constant torque $\tau$ over $\Delta t$ gives an impulse of variance $(\tau\Delta t)^2$, and white
+noise of intensity $q$ gives $q\thinspace \Delta t$. Tuned by hand against NEES, $q$ = 1e-7 per joint (10⁴ times the
+guess): the smallest value tried at which the filter keeps the pendulum. Below it, the filter grows too sure of
+its own predictions, a count change becomes a reading it considers impossible, and it diverges.
 
 **Predict** (continuous-discrete EKF [18, Alg. 10.24]). Between samples the estimate and its covariance follow
 
@@ -303,25 +304,56 @@ $R = (\Delta^2/12)\thinspace I$, the variance of a quantization error spread uni
 integrated together by the same RK4 sub-steps as the plant (section 2), with $u$ held. CasADi gives $A$ and $L$
 exactly [2].
 
-**Update.** With the innovation $\nu = y - H\hat x^-$ and $S = H P^- H^T + R$:
+**Update: conditioning on the count cell.** A reading is not the angle plus noise; it says only that the true
+angles $z = Hx$, $H = [I\ \ 0]$, lie in the cell $C = [y_\theta \pm \Delta/2] \times [y_\alpha \pm \Delta/2]$. (Treating it as
+$y = Hx + v$ with white $v$ of variance $\Delta^2/12$ fails: while an angle moves slowly its rounding error repeats
+from sample to sample, a deterministic sawtooth [19, App. E], and a filter that takes each repeat as new
+information grows far too confident.) Given the predicted belief $x \sim N(\hat x^-, P^-)$, the angles have the prior
+$z \sim N(H\hat x^-, S)$ with $S = H P^- H^T$. Let $m$ and $V$ be the mean and covariance of that bivariate normal
+truncated to $C$. Since $x$ given $z$ is normal with a mean linear in $z$ and a covariance independent of it
+[25, Lemma A.2], the laws of total expectation and variance give the exact posterior moments [24, Prop. 1]:
 
 ```math
-K = P^- H^T S^{-1}, \qquad \hat x = \hat x^- + K\nu, \qquad P = (I - KH)\,P^-(I - KH)^T + K R K^T ,
+K = P^- H^T S^{-1}, \qquad \hat x = \hat x^- + K\thinspace(m - H\hat x^-), \qquad P = P^- - K\thinspace(S - V)\thinspace K^T .
 ```
 
-the covariance in Joseph form [20, ch. 5], symmetric and positive definite by construction.
+$P$ is positive semidefinite by construction: $P^- - K S K^T$ is a Schur complement of the joint covariance of
+$(x, z)$, and $K V K^T$ is a covariance. The belief is then taken as Gaussian again with these moments
+(moment matching, an approximation: see below).
+
+- **The truncated moments** are in closed form [22, eqs. (10), (11), (16)–(18), (21)]: with standardized limits,
+  everything but the rectangle's probability $\alpha_C$ needs only the univariate normal density and CDF.
+- **The rectangle probability** comes from the bivariate normal CDF by inclusion–exclusion of its four corners,
+  the CDF from Owen's T function [23]:
+  $\Phi_2(h, k; \rho) = \tfrac12\Phi(h) + \tfrac12\Phi(k) - T(h, a_h) - T(k, a_k) - \beta$ with
+  $a_h = (k - \rho h)/(h\sqrt{1-\rho^2})$, $a_k$ likewise, and $\beta = \tfrac12$ when $h$ and $k$ have opposite signs, else 0.
+  SciPy's `owens_t` is deterministic and accurate to about 1e-14; SciPy's own bivariate CDF is not used, as it
+  integrates by randomized quasi-Monte Carlo to a tolerance of 1e-5.
+- **Against cancellation**, two exact identities, not taken from the literature: a coordinate whose interval
+  lies above the prior's mean is mirrored first ($z_k \to -z_k$, flipping the sign of $\rho$), so the four corner
+  CDFs are small; and $\Phi(b) - \Phi(a)$ is evaluated as $\Phi(-a) - \Phi(-b)$ when $a \gt 0$.
+- **Checked** against 2-D quadrature and 40-digit arithmetic: agreement to about 1e-14.
 
 **Within each 1 ms sample**, in order: read the encoders, update the estimate, run the controller on it, then
 predict to the next sample with the torque it chose. The filter starts from the first reading with zero
-velocities, $P_0 = \mathrm{diag}(\Delta^2/12, \Delta^2/12, 1, 1)$ (rad, rad/s): it is not told that the rig starts
-at rest.
+velocities, $P_0 = \mathrm{diag}(\Delta^2/12, \Delta^2/12, 1, 1)$ (rad², rad²/s²): the angles spread uniformly over one
+count, and the velocities only roughly known, since it is not told that the rig starts at rest.
 
 **Is the filter consistent?** Against the true state, the normalised estimation error squared
 $\text{NEES} = (\hat x - x)^T P^{-1} (\hat x - x)$ should follow a $\chi^2$ distribution with 4 degrees of freedom if
-$P$ is right. The normalised innovation squared $\text{NIS} = \nu^T S^{-1} \nu$ should follow one with 2
-[21, §5.4]. Each run plots both against their two-sided 95% bounds and prints the fraction of samples inside.
-These are diagnostics, not checks. Quantization is not the white noise the filter assumes: when an angle moves
-slowly, its rounding error is a deterministic, time-correlated sawtooth, not random [19, App. E].
+$P$ is right [20, §5.4]. Each run plots it against its two-sided 95% bounds and prints the fraction of samples
+inside: a diagnostic, not a check. Each run also plots $\alpha_C$, the probability the filter gave the cell it
+then read, and **fails a check** if it ever drops below `min_cell_prob` = 1e-6: the reading was a big surprise,
+the filter's belief was wrong, and the truncated moments also start losing accuracy there.
+
+**Known limitation: repeated readings are still double counted.** The encoder has no noise, so in exact Bayes a
+second identical reading changes nothing. After each cut, though, the filter re-fits a Gaussian and forgets
+that its belief was already confined to the cell, so the next identical reading trims the Gaussian's tails
+again. On a still pendulum with no process noise, the belief's std after 10, 100 and 1000 identical readings is
+0.58, 0.45 and 0.38 of the exact $\Delta/\sqrt{12}$ (with the white-noise update: 0.32, 0.10, 0.03). Every filter
+whose belief is a single Gaussian shares this; the established exact remedies carry the cell in the belief
+(particle filters, set-membership bounds) or change the measurement (updates at the instants a count edge is
+crossed).
 
 ## References
 
@@ -361,8 +393,20 @@ slowly, its rounding error is a deterministic, time-correlated sawtooth, not ran
     Algorithm 10.24 (continuous-discrete EKF).
 19. B. Widrow, I. Kollár, *Quantization Noise*, Cambridge University Press, 2008: §4.2 (the uniform noise
     model), §4.3 (Quantizing Theorems I and II), Appendix E (the error conditioned on the input).
-20. D. Simon, *Optimal State Estimation*, Wiley, 2006, ch. 5 (the Joseph form of the covariance update).
-21. Y. Bar-Shalom, X. R. Li, T. Kirubarajan, *Estimation with Applications to Tracking and Navigation*, Wiley,
+20. Y. Bar-Shalom, X. R. Li, T. Kirubarajan, *Estimation with Applications to Tracking and Navigation*, Wiley,
     2001, §5.4 (consistency of state estimators: NEES and NIS).
-22. Quanser, *QUBE-Servo 2 Product Information Sheet*, 2017, "Device Specifications"; Quanser, *Qube-Servo 3
+21. Quanser, *QUBE-Servo 2 Product Information Sheet*, 2017, "Device Specifications"; Quanser, *Qube-Servo 3
     User Manual*, v1.1, 2024, §2.2.2 and Table 2.2 (the same encoders).
+22. B. G. Manjunath, S. Wilhelm, "Moments calculation for the doubly truncated multivariate normal density",
+    arXiv:1206.5387v1, 2012, eqs. (10), (11), (16)–(18), (21), after G. M. Tallis, *J. R. Stat. Soc. B* 23(1),
+    1961. Journal version: *J. Behavioral Data Science* 1(1), 17–33, 2021 (its equation numbers not checked).
+23. D. B. Owen, "A table of normal integrals", *Communications in Statistics: Simulation and Computation* 9(4),
+    389–419, 1980, p. 416, formula 3.1, as given in D. Komelj, *American J. Computational Mathematics* 13,
+    476–504, 2023 (arXiv:2312.00011), eqs. (13)–(14); Owen's paper itself not seen. Owen's T as computed by
+    SciPy: M. Patefield, D. Tandy, *J. Statistical Software* 5(5), 2000.
+24. E. J. Msechu, S. I. Roumeliotis, A. Ribeiro, G. B. Giannakis, "Decentralized quantized Kalman filtering with
+    scalable communication cost", *IEEE Trans. Signal Processing* 56(8), 3727–3741, 2008, Proposition 1,
+    eqs. (18)–(21). The approach goes back to R. E. Curry, W. E. Vander Velde, J. E. Potter, *IEEE Trans.
+    Information Theory* 16(2), 152–161, 1970.
+25. S. Särkkä, *Bayesian Filtering and Smoothing*, Cambridge University Press, 2013, Appendix A.1, Lemma A.2,
+    eqs. (A.4)–(A.5) (the conditional distribution of jointly Gaussian variables).

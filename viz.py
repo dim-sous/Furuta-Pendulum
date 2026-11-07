@@ -56,7 +56,8 @@ def figure(path, title, controller, t, x, u, d, E, motor_work, tap_work, frictio
     pendulum) and the energy balance E(t) - E(0) = motor work + tap work - friction loss, against time, with any
     failed checks flagged at the top. The arm and the pendulum get separate panels: the arm can drift by hundreds
     of degrees while the pendulum moves by a few. With estimates (run.consistency), four more panels: the
-    estimation errors of the angles and of the rates, and NEES and NIS against their 95% bounds."""
+    estimation errors of the angles and of the rates, NEES against its 95% bounds, and the probability of each
+    read cell under the filter's belief against the check's threshold."""
     tapped = d.any()
     palette, fontsize, lw = LIGHT, 10, 1.5
     n_panels = 10 if estimates else 6
@@ -98,8 +99,9 @@ def figure(path, title, controller, t, x, u, d, E, motor_work, tap_work, frictio
 
 
 def _estimation_panels(ax, palette, fontsize, lw, t, estimates):
-    """The EKF's errors x_hat - x (angles, then rates) and its NEES and NIS on log axes between their 95% bounds
-    (dashed), each titled with the fraction of samples inside."""
+    """The EKF's errors x_hat - x (angles, then rates); its NEES on a log axis between its 95% bounds (dashed),
+    titled with the fraction of samples inside; and the probability of each read cell under its belief, on a log
+    axis with the threshold below which a run fails a check (dashed, red)."""
     error = np.rad2deg(estimates["error"])
     for a, (i, j), unit in zip(ax[:2], [(0, 1), (2, 3)], ["deg", "deg/s"]):
         a.plot(t, error[:, i], color=palette["arm"], lw=lw, label="arm")
@@ -108,15 +110,22 @@ def _estimation_panels(ax, palette, fontsize, lw, t, estimates):
     ax[0].set_ylabel("angle error [deg]")
     ax[0].set_title("EKF estimate − true state", loc="left", fontsize=fontsize, color=palette["muted"])
     ax[1].set_ylabel("rate error [deg/s]")
-    for a, key, name in [(ax[2], "nees", "NEES"), (ax[3], "nis", "NIS")]:
-        lo, hi = estimates[f"{key}_bounds"]
-        a.plot(t[1:], estimates[key][1:], color=palette["estimator"], lw=lw)
-        for bound in (lo, hi):
-            a.axhline(bound, color=palette["muted"], lw=1, ls="--")
-        a.set_yscale("log")
-        a.set_ylabel(name)
-        a.set_title(f"{name}: {estimates[f'{key}_inside']:.0%} of samples inside the 95% bounds "
-                    f"[{lo:.3g}, {hi:.3g}]", loc="left", fontsize=fontsize, color=palette["muted"])
+    lo, hi = estimates["nees_bounds"]
+    ax[2].plot(t[1:], estimates["nees"][1:], color=palette["estimator"], lw=lw)
+    for bound in (lo, hi):
+        ax[2].axhline(bound, color=palette["muted"], lw=1, ls="--")
+    ax[2].set_yscale("log")
+    ax[2].set_ylabel("NEES")
+    ax[2].set_title(f"NEES: {estimates['nees_inside']:.0%} of samples inside the 95% bounds [{lo:.3g}, {hi:.3g}]",
+                    loc="left", fontsize=fontsize, color=palette["muted"])
+    cell_prob = estimates["cell_prob"][1:]
+    ax[3].plot(t[1:], cell_prob, color=palette["estimator"], lw=lw)
+    ax[3].axhline(c.EKF["min_cell_prob"], color=palette["critical"], lw=1, ls="--")
+    ax[3].set_yscale("log")
+    ax[3].set_ylabel("cell probability")
+    ax[3].set_title(f"probability of the read cell under the filter's belief: smallest {np.min(cell_prob):.1e}, "
+                    f"check threshold {c.EKF['min_cell_prob']:.0e}", loc="left", fontsize=fontsize,
+                    color=palette["muted"])
 
 
 def video(path, title, controller, t, x, u, d, failed_checks):
