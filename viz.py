@@ -197,7 +197,7 @@ def likelihood_figure(path, b_grid, tau_grid, nll, step1, truth, settings, faile
             label="truth (viscous, Coulomb)" if diagnostic else "truth (viscous, Coulomb; plus a Stribeck peak)")
     ax.set_xlabel("viscous b [N m s/rad]")
     ax.set_ylabel("Coulomb τ_C [N m]")
-    ax.set_title(f"{settings['duration']:g} s of open-loop torque pulses, EKF Q_c = {c.EKF['Q_c'][0]:g} (N m)² s",
+    ax.set_title(f"{settings['duration']:g} s of open-loop torque pulses, EKF Q_c = {settings['Q_c']:g} (N m)² s",
                  loc="left", fontsize=fontsize, color=palette["muted"])
     _legend(ax, palette, fontsize, loc="upper left", bbox_to_anchor=(0.0, -0.1), ncol=2)
     _flag(ax, palette, fontsize, failed_checks, width=90)

@@ -74,19 +74,26 @@ TAP = dict(t=5.0,                               # s, start
 # counts, zero where the model's angles are zero (a calibrated encoder).
 ENCODER_RESOLUTION = 2 * pi / 2048      # rad per count
 
+# The arm friction identified by friction identification step 1 (printed by sysid.py, pasted here):
+# viscous [N m s/rad], Coulomb [N m]. The EKF's arm model uses it.
+FRICTION_ID = dict(viscous=9.9945e-04, coulomb=1.1141e-04)
+
 # State estimation from the two encoder angles, for experiments with state="ekf": a continuous-discrete extended
-# Kalman filter (estimator.py) [18]. Its model is the plant's with viscous friction only, while the truth keeps
-# the Coulomb and Stribeck terms, so the filter never has the truth's model. Process noise: white torque noise on
-# the arm's and the pendulum's joints, entering as the motor torque and the tap do, of intensity Q_c per joint;
-# first guess (1e-4 N m)^2 * DT = 1e-11, the dropped Coulomb torque held over one sample; tuned by hand by NEES
-# [20] to 1e4 times that, the smallest value scanned at which the filter keeps the pendulum (2026-11-07). Measurement: a reading says the angles lie in its count cell, and the update conditions on that cell
-# [22-25]; a run fails a check when a reading's cell has probability below min_cell_prob under the filter's
-# belief (a big surprise, where the update's moments also start losing accuracy). The filter starts from the first
-# reading with zero velocities, uncertain by P0_std (the angles: a uniform spread over one count, std
-# resolution / sqrt(12) [19]).
-EKF = dict(friction_arm=dict(FRICTION_ARM, coulomb=0.0, breakaway=0.0),
+# Kalman filter (estimator.py) [18]. Its arm friction is viscous + Coulomb as identified from encoder data
+# (FRICTION_ID; Coulomb smoothed over 0.01 rad/s, the band of the Simscape default breakaway speed 0.1 rad/s
+# [4]), while the truth keeps its Stribeck law, so the filter never has the truth's model; its pendulum friction is
+# still the plant's viscous value. Process noise: white torque noise on the arm's and the pendulum's joints,
+# entering as the motor torque and the tap do, of intensity Q_c per joint, tuned by hand on a sweep (2026-11-07):
+# 1e-8, the lowest value at which both EKF experiments keep the pendulum (5e-9 loses it); with viscous-only
+# friction the filter needed 1e-7. Measurement: a reading says the angles lie in its count cell, and the update
+# conditions on that cell [22-25]; a run fails a check when a reading's cell has probability below min_cell_prob
+# under the filter's belief (a big surprise, where the update's moments also start losing accuracy). The filter
+# starts from the first reading with zero velocities, uncertain by P0_std (the angles: a uniform spread over one
+# count, std resolution / sqrt(12) [19]).
+EKF = dict(friction_arm=dict(viscous=FRICTION_ID["viscous"], coulomb=FRICTION_ID["coulomb"],
+                             breakaway=FRICTION_ID["coulomb"], w_breakaway=0.1),   # breakaway = Coulomb: no Stribeck
            friction_pend=dict(FRICTION_PEND, coulomb=0.0, breakaway=0.0),
-           Q_c=[1e-7, 1e-7],                    # (N m)^2 s, arm joint, pendulum joint
+           Q_c=[1e-8, 1e-8],                    # (N m)^2 s, arm joint, pendulum joint
            P0_std=[ENCODER_RESOLUTION / 12**0.5] * 2 + [1.0, 1.0],   # rad, rad, rad/s, rad/s
            min_cell_prob=1e-6)
 
@@ -99,15 +106,13 @@ SYSID = dict(torque_min=3e-4, torque_max=3e-2,  # N m: steady speeds from about 
              levels=20,                         # per direction
              wait=20.0, average=10.0)           # s, multiples of DT
 
-# The arm friction identified by step 1 (printed by sysid.py, pasted here): viscous [N m s/rad], Coulomb [N m].
-FRICTION_ID = dict(viscous=9.9945e-04, coulomb=1.1141e-04)
-
 # Friction identification, step 2a (sysid.py): the likelihood surface. One open-loop experiment from rest records
 # the torques and the encoder readings: torque pulses of `pulse` s, each followed by `coast` s at zero, with
 # amplitudes uniform in +-max_torque from a generator seeded by `seed`. The EKF (config.EKF, its arm friction
 # viscous + Coulomb) runs over the record for each (b, tau_C) of a grid spanning the factors b_range x tau_range
-# of FRICTION_ID; its negative log-likelihood is -sum_k log(cell probability_k) [25, sec. 12.1.1, eqs. (12.5)-(12.6)].
+# of FRICTION_ID, with the EKF's Q_c set to Q_c here; its negative log-likelihood is -sum_k log(cell probability_k) [25, sec. 12.1.1, eqs. (12.5)-(12.6)].
 LIKELIHOOD = dict(duration=300.0, pulse=0.5, coast=0.5, max_torque=6e-3, seed=1,   # s, s, s, N m
+                  Q_c=1e-7,                                                        # (N m)^2 s per joint, fixed
                   b_range=(0.5, 1.5), tau_range=(0.0, 2.5), points=7,              # factors of FRICTION_ID; per axis
                   truth_arm=None)   # None: the truth is FRICTION_ARM. DIAGNOSTIC ONLY, never a result: a known-answer
                                     # test with the truth inside the EKF's model class, e.g.
