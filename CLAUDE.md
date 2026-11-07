@@ -36,8 +36,9 @@ config.py    every parameter and setting: plant, MAX_TORQUE, PID gains, TUNE, SW
 model.py     plant: kinematics -> Lagrangian -> equations of motion (CasADi), friction, RK4 step
 control.py   controllers (open_loop, pid, swing_up), chosen per experiment; pid_step, the PID formula as a CasADi
              function, shared by the simulation and the tuner
-estimator.py continuous-discrete EKF on the encoder angles (its model: viscous friction only)
-run.py       simulation loop per experiment, encoder, checks, EKF consistency (NEES/NIS), key numbers
+estimator.py continuous-discrete EKF on the encoder angles (its model: viscous friction only); its update
+             conditions on the count cell (truncated bivariate normal, Owen's T)
+run.py       simulation loop per experiment, encoder, checks (incl. the EKF surprise check), NEES, key numbers
 tune.py      PID gain tuning: IPOPT on the closed loop rolled out in CasADi; prints gains to paste
 viz.py       figures (PNG) and videos (MP4), written to results/<controller>/ (gitignored)
 README.md    orients a visitor: what it is, how to install, run and check it, layout, limitations, license

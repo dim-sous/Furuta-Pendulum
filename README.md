@@ -79,6 +79,8 @@ and video, and `run.py` ends by listing the failed runs, with exit status 1. The
 
 - Simulation only; no hardware.
 - The encoders are ideal apart from their resolution: no electrical noise, missed counts or delay.
+- The EKF's angle uncertainty is about 1.6 times too small: its single-Gaussian belief counts a repeated
+  encoder reading as new information (see METHODS.md, section 7).
 - The motor is a pure torque source: its electrical dynamics and back-EMF are not modelled.
 - The pendulum joint has viscous friction only; Quanser publishes no Coulomb value for it.
 
