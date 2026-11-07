@@ -74,14 +74,15 @@ def friction(w, viscous, coulomb, breakaway, w_breakaway):
             + coulomb * ca.tanh(w / w_coul) + viscous * w)
 
 
-def dynamics(with_friction):
+def dynamics(with_friction, friction_arm=c.FRICTION_ARM, friction_pend=c.FRICTION_PEND):
     """CasADi functions of the plant: xdot = f(x, u, d), and P(x, u, d) = [motor power, friction power loss,
-    disturbance power].
+    disturbance power]. With friction, each joint's friction law takes its parameters from friction_arm and
+    friction_pend (dicts like config.FRICTION_ARM; the plant's own by default, the EKF passes its model's).
 
     Lagrange's equations d/dt(dL/dqd) - dL/dq = Q, solved for the accelerations:
     M(q) qdd = Q + dL/dq - (d/dq dL/dqd) qd, with the mass matrix M = d/dqd dL/dqd.
     """
-    tau_f = (ca.vertcat(friction(qd[0], **c.FRICTION_ARM), friction(qd[1], **c.FRICTION_PEND))
+    tau_f = (ca.vertcat(friction(qd[0], **friction_arm), friction(qd[1], **friction_pend))
              if with_friction else ca.DM.zeros(2))
     Q = ca.vertcat(u, d) - tau_f        # generalised forces
     dL_dqd = ca.gradient(L, qd)

@@ -9,7 +9,7 @@ summed over the starts,
 an integral of squared errors and torque, each divided by its largest acceptable value (Bryson's rule [16]).
 The unknowns are the gains divided by their first guess (config.PID_GAINS), so all six share one scale, and each
 is bounded to keep the first guess's sign (zero allowed). Starts are added one at a time, each stage starting from
-the previous one's gains. Sources [n] are the References in README.md.
+the previous one's gains. Sources [n] are the References in METHODS.md.
 
 The torque cap is left out of the tuning loop (TUNE["cap"] = inf): with config.MAX_TORQUE in the loop the tuner
 returns meaningless gains (it chases bang-bang control). The tuned gains are then checked with the cap, as the

@@ -1,5 +1,5 @@
 """All plant parameters and run settings (viz.py keeps only layout and styling constants).
-SI units; angles in radians (deg() converts from degrees). Sources [n] are the References in README.md.
+SI units; angles in radians (deg() converts from degrees). Sources [n] are the References in METHODS.md.
 """
 from numpy import deg2rad as deg, pi, sin
 
@@ -70,11 +70,29 @@ TAP = dict(t=5.0,                               # s, start
            duration=0.02,                       # s, multiple of DT
            sizes=[0.0025, 0.005, 0.01, 0.02, 0.04])   # N m
 
+# Encoders on both joints: 2048 counts per revolution in quadrature [22]. A reading is the angle rounded to whole
+# counts, zero where the model's angles are zero (a calibrated encoder).
+ENCODER_RESOLUTION = 2 * pi / 2048      # rad per count
+
+# State estimation from the two encoder angles, for experiments with state="ekf": a continuous-discrete extended
+# Kalman filter (estimator.py) [18]. Its model is the plant's with viscous friction only, while the truth keeps
+# the Coulomb and Stribeck terms, so the filter never has the truth's model. Process noise: white torque noise on
+# the arm's and the pendulum's joints, entering as the motor torque and the tap do, of intensity Q_c per joint;
+# first guess (1e-4 N m)^2 * DT, the dropped Coulomb torque held over one sample, then tuned by hand by NEES/NIS
+# [21]. Measurement noise: the quantization's variance, resolution^2 / 12 per angle [19]. The filter starts from
+# the first reading with zero velocities, uncertain by P0_std.
+EKF = dict(friction_arm=dict(FRICTION_ARM, coulomb=0.0, breakaway=0.0),
+           friction_pend=dict(FRICTION_PEND, coulomb=0.0, breakaway=0.0),
+           Q_c=[1e-11, 1e-11],                  # (N m)^2 s, arm joint, pendulum joint
+           R=[ENCODER_RESOLUTION**2 / 12] * 2,  # rad^2, theta, alpha
+           P0_std=[ENCODER_RESOLUTION / 12**0.5] * 2 + [1.0, 1.0])   # rad, rad, rad/s, rad/s
+
 # Experiments: x0 = [theta, alpha, theta_dot, alpha_dot]; alpha = 0 hanging down, +-pi upright.
 # Each experiment names its controller and that controller's settings:
 #   "open_loop": torque(t) [N m];   "pid": gains, a dict like PID_GAINS;
 #   "swing_up": gains (the PID's) and swing_up, a dict like SWING_UP.
-# Optional: disturbance(t) [N m], a torque on the pendulum's joint (zero if absent).
+# Optional: disturbance(t) [N m], a torque on the pendulum's joint (zero if absent); state, what the controller
+# sees: "true" (the true state, the default) or "ekf" (the EKF's estimate from the encoders).
 EXPERIMENTS = {
     "frictionless_release": dict(x0=[0, deg(175), 0, 0], t_end=10.0, friction=False,
                                  controller="open_loop", torque=lambda t: 0.0),
@@ -96,7 +114,9 @@ EXPERIMENTS = {
         disturbance=lambda t, size=size: size if TAP["t"] <= t < TAP["t"] + TAP["duration"] else 0.0)
        for size in TAP["sizes"]},
 }
-RUN = ["pid_near_upright"] # list(EXPERIMENTS)
+EXPERIMENTS |= {f"{name}_ekf": dict(EXPERIMENTS[name], state="ekf")      # twins whose controller sees the EKF
+                for name in ("pid_near_upright", "swing_up_from_rest")}
+RUN = ["pid_near_upright_ekf", "swing_up_from_rest_ekf"] # list(EXPERIMENTS)
 
 # Output
 RESULTS_DIR = "results"

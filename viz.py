@@ -21,7 +21,7 @@ matplotlib.rcParams["animation.ffmpeg_path"] = imageio_ffmpeg.get_ffmpeg_exe()  
 
 LIGHT = dict(surface="#fcfcfb", ink="#0b0b0b", muted="#898781", grid="#e1e0d9", axis="#c3c2b7",
              arm="#2a78d6", pend="#eb6834", motor="#1baf7a", energy="#eda100", friction="#e87ba4", tap="#008300",
-             critical="#d03b3b")
+             estimator="#8a63d2", critical="#d03b3b")
 DARK = dict(surface="#1a1a19", ink="#f0efec", muted="#898781", grid="#2c2c2a", axis="#383835",
             arm="#3987e5", pend="#d95926", motor="#199e70", tap="#008300", critical="#d03b3b")
 
@@ -50,14 +50,18 @@ def _flag(ax, palette, fontsize, failed_checks, width):
                      fontsize=fontsize, color=palette["critical"])
 
 
-def figure(path, title, controller, t, x, u, d, E, motor_work, tap_work, friction_loss, residual, failed_checks):
+def figure(path, title, controller, t, x, u, d, E, motor_work, tap_work, friction_loss, residual, failed_checks,
+           estimates=None):
     """Arm and pendulum angles and rates, torques (the motor's, labelled with the controller, and any tap d on the
     pendulum) and the energy balance E(t) - E(0) = motor work + tap work - friction loss, against time, with any
     failed checks flagged at the top. The arm and the pendulum get separate panels: the arm can drift by hundreds
-    of degrees while the pendulum moves by a few."""
+    of degrees while the pendulum moves by a few. With estimates (run.consistency), four more panels: the
+    estimation errors of the angles and of the rates, and NEES and NIS against their 95% bounds."""
     tapped = d.any()
     palette, fontsize, lw = LIGHT, 10, 1.5
-    fig, ax = plt.subplots(6, 1, figsize=(10, 14), sharex=True, facecolor=palette["surface"], layout="constrained")
+    n_panels = 10 if estimates else 6
+    fig, ax = plt.subplots(n_panels, 1, figsize=(10, 14 / 6 * n_panels), sharex=True, facecolor=palette["surface"],
+                           layout="constrained")
     for a in ax:
         _style(a, palette, fontsize)
     ax[0].plot(t, np.rad2deg(x[:, 0]), color=palette["arm"], lw=lw)
@@ -80,15 +84,39 @@ def figure(path, title, controller, t, x, u, d, E, motor_work, tap_work, frictio
         ax[5].plot(t, tap_work, color=palette["tap"], lw=lw, ls="--", label="tap work")
     ax[5].plot(t, -friction_loss, color=palette["friction"], lw=lw, label="− friction loss")
     ax[5].set_ylabel("energy [J]")
-    ax[5].set_xlabel("time [s]")
     balance = "E − E(0) − motor work" + (" − tap work" if tapped else "") + " + friction loss"
     ax[5].set_title(f"energy balance residual: max |{balance}| = {residual:.1e} J",
                     loc="left", fontsize=fontsize, color=palette["muted"])
     _legend(ax[5], palette, fontsize, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    if estimates:
+        _estimation_panels(ax[6:], palette, fontsize, lw, t[:len(u)], estimates)
+    ax[-1].set_xlabel("time [s]")
     _flag(ax[0], palette, fontsize, failed_checks, width=110)
     fig.suptitle(title, color=palette["ink"], fontsize=13)
     fig.savefig(path, dpi=150, facecolor=palette["surface"])
     plt.close(fig)
+
+
+def _estimation_panels(ax, palette, fontsize, lw, t, estimates):
+    """The EKF's errors x_hat - x (angles, then rates) and its NEES and NIS on log axes between their 95% bounds
+    (dashed), each titled with the fraction of samples inside."""
+    error = np.rad2deg(estimates["error"])
+    for a, (i, j), unit in zip(ax[:2], [(0, 1), (2, 3)], ["deg", "deg/s"]):
+        a.plot(t, error[:, i], color=palette["arm"], lw=lw, label="arm")
+        a.plot(t, error[:, j], color=palette["pend"], lw=lw, label="pendulum")
+        _legend(a, palette, fontsize, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    ax[0].set_ylabel("angle error [deg]")
+    ax[0].set_title("EKF estimate − true state", loc="left", fontsize=fontsize, color=palette["muted"])
+    ax[1].set_ylabel("rate error [deg/s]")
+    for a, key, name in [(ax[2], "nees", "NEES"), (ax[3], "nis", "NIS")]:
+        lo, hi = estimates[f"{key}_bounds"]
+        a.plot(t[1:], estimates[key][1:], color=palette["estimator"], lw=lw)
+        for bound in (lo, hi):
+            a.axhline(bound, color=palette["muted"], lw=1, ls="--")
+        a.set_yscale("log")
+        a.set_ylabel(name)
+        a.set_title(f"{name}: {estimates[f'{key}_inside']:.0%} of samples inside the 95% bounds "
+                    f"[{lo:.3g}, {hi:.3g}]", loc="left", fontsize=fontsize, color=palette["muted"])
 
 
 def video(path, title, controller, t, x, u, d, failed_checks):

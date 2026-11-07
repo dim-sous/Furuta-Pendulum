@@ -7,4 +7,5 @@ dependencies = [
     "imageio-ffmpeg>=0.7.0",
     "matplotlib>=3.11.2",
     "numpy>=2.5.4",
+    "scipy>=1.18.1",
 ]

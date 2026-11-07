@@ -6,21 +6,31 @@ from pathlib import Path
 
 import casadi as ca
 import numpy as np
+from scipy.stats import chi2
 
 import config as c
 import control
+import estimator
 import model
 import viz
 
 
-def simulate(x0, t_end, controller, with_friction, dt, substeps, disturbance=lambda t: 0.0):
+def encoder(x):
+    """Encoder readings [theta, alpha] of state x: each angle rounded to whole counts of c.ENCODER_RESOLUTION."""
+    return c.ENCODER_RESOLUTION * np.round(x[:2] / c.ENCODER_RESOLUTION)
+
+
+def simulate(x0, t_end, controller, with_friction, dt, substeps, disturbance=lambda t: 0.0, estimate=None):
     """Simulates the pendulum from state x0 for t_end seconds.
 
     controller(t, x) gives the motor torque and disturbance(t) the torque on the pendulum's joint, both every
     sample period dt and held constant until the next sample (zero-order hold); RK4 integrates each period in
-    `substeps` steps. Returns times t (n+1), states x (n+1, 4), motor torques u (n), the cumulative motor work
-    and friction loss (n+1 each), disturbance torques d (n) and the cumulative disturbance work (n+1); the works
-    are integrated alongside the state for the energy balance.
+    `substeps` steps. The controller sees the true state, or, given an estimator estimate(y, u_prev) ->
+    (x_hat, P, nis) (estimator.py), the estimate made from the encoder readings y.
+    Returns times t (n+1), states x (n+1, 4), motor torques u (n), the cumulative motor work and friction loss
+    (n+1 each), disturbance torques d (n) and the cumulative disturbance work (n+1), the works integrated
+    alongside the state for the energy balance; and, with an estimator, a dict of its estimates x_hat (n, 4),
+    covariances P (n, 4, 4) and NIS (n) at each sample, else None.
     """
     n = round(t_end / dt)
     if not np.isclose(n * dt, t_end, rtol=1e-12, atol=0):
@@ -32,13 +42,32 @@ def simulate(x0, t_end, controller, with_friction, dt, substeps, disturbance=lam
     x[0] = x0
     u, d = np.empty(n), np.empty(n)
     work = np.zeros((n + 1, 3))
+    x_hat, P, nis = np.empty((n, 4)), np.empty((n, 4, 4)), np.empty(n)
     for k in range(n):
-        u[k] = controller(t[k], x[k])
+        if estimate:
+            x_hat[k], P[k], nis[k] = estimate(encoder(x[k]), u[k - 1] if k else 0.0)
+        u[k] = controller(t[k], x_hat[k] if estimate else x[k])
         d[k] = disturbance(t[k])
         x_next, dwork = step(x[k], u[k], d[k])
         x[k + 1] = np.asarray(x_next).ravel()
         work[k + 1] = work[k] + np.asarray(dwork).ravel()
-    return t, x, u, work[:, 0], work[:, 1], d, work[:, 2]
+    estimates = dict(x_hat=x_hat, P=P, nis=nis) if estimate else None
+    return t, x, u, work[:, 0], work[:, 1], d, work[:, 2], estimates
+
+
+def consistency(x, estimates):
+    """The estimates with their error x_hat - x against the true states x added, and the consistency tests of
+    [21, sec. 5.4]: NEES = e^T P^-1 e at each sample, chi-square with 4 degrees of freedom if the filter's
+    covariance P is right, and NIS, chi-square with 2 (the measured angles); their two-sided 95% bounds, and the
+    fraction of samples inside them (from the second sample: the first has no update, hence no NIS). They are
+    diagnostics, never failed checks: quantization is not the white noise the filter assumes."""
+    error = estimates["x_hat"] - x
+    nees = np.einsum("ki,ki->k", error, np.linalg.solve(estimates["P"], error[..., None])[..., 0])
+    nees_bounds = chi2.ppf([0.025, 0.975], df=error.shape[1])
+    nis_bounds = chi2.ppf([0.025, 0.975], df=2)
+    inside = lambda s, bounds: np.mean((bounds[0] <= s) & (s <= bounds[1]))
+    return dict(estimates, error=error, nees=nees, nees_bounds=nees_bounds, nis_bounds=nis_bounds,
+                nees_inside=inside(nees[1:], nees_bounds), nis_inside=inside(estimates["nis"][1:], nis_bounds))
 
 
 def swing_frequency():
@@ -70,9 +99,16 @@ def main():
                      f"back beyond {np.rad2deg(s['leave']):g}°; |u| ≤ {c.MAX_TORQUE:g} N m")
         else:
             raise ValueError(f"{name}: unknown controller {e['controller']!r}")
-        t, x, u, motor_work, friction_loss, d, tap_work = simulate(
+        state = e.get("state", "true")
+        if state == "ekf":
+            estimate = estimator.ekf(**c.EKF, dt=c.DT, substeps=c.RK4_SUBSTEPS)
+        elif state == "true":
+            estimate = None
+        else:
+            raise ValueError(f"{name}: unknown state {state!r}")
+        t, x, u, motor_work, friction_loss, d, tap_work, estimates = simulate(
             e["x0"], e["t_end"], controller, e["friction"], c.DT, c.RK4_SUBSTEPS,
-            e.get("disturbance", lambda t: 0.0))
+            e.get("disturbance", lambda t: 0.0), estimate)
         # The checks report instead of stopping, so that a run that went wrong can still be looked at.
         failed_checks = []
         finite = np.all(np.isfinite(x), axis=1)
@@ -81,6 +117,8 @@ def main():
             failed_checks.append(f"the state blew up at t = {t[k]:.3f} s; the results end there")
             t, x, u, motor_work, friction_loss = t[:k], x[:k], u[:k - 1], motor_work[:k], friction_loss[:k]
             d, tap_work = d[:k - 1], tap_work[:k]
+            if estimates:
+                estimates = {key: value[:k - 1] for key, value in estimates.items()}
         E = np.asarray(model.energy.map(len(t))(x.T)).ravel()
         residual = np.max(np.abs(E - E[0] - motor_work - tap_work + friction_loss))
         # After a blow-up the last samples are too large for these two checks to mean anything.
@@ -94,12 +132,18 @@ def main():
               + f"friction loss = {friction_loss[-1]:.4e} J, energy balance residual = {residual:.1e} J")
         for message in failed_checks:
             print(f"  CHECK FAILED: {message}")
+        if estimates:
+            estimates = consistency(x[:len(u)], estimates)
+            rms = np.rad2deg(np.sqrt(np.mean(estimates["error"]**2, axis=0)))
+            print(f"  EKF: RMS error θ {rms[0]:.3f}°, α {rms[1]:.3f}°, θ̇ {rms[2]:.2f}°/s, α̇ {rms[3]:.2f}°/s; "
+                  f"inside the 95% bounds: NEES {estimates['nees_inside']:.0%}, NIS {estimates['nis_inside']:.0%} "
+                  "of samples")
         title = (f"{name.replace('_', ' ')}: θ0 = {np.rad2deg(e['x0'][0]):.0f}°, α0 = {np.rad2deg(e['x0'][1]):.0f}°, "
                  f"friction {'on' if e['friction'] else 'off'}")
         folder = out / e["controller"]                     # one folder per controller
         folder.mkdir(parents=True, exist_ok=True)
         viz.figure(folder / f"{name}.png", title, label, t, x, u, d, E, motor_work, tap_work, friction_loss, residual,
-                   failed_checks)
+                   failed_checks, estimates)
         viz.video(folder / f"{name}.mp4", title, label, t, x, u, d, failed_checks)
         if failed_checks:
             failed_runs.append(name)
