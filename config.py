@@ -33,9 +33,24 @@ DT = 1e-3                               # s, controller sample period; the torqu
 RK4_SUBSTEPS = 4                        # RK4 steps per sample period: integration step DT / RK4_SUBSTEPS
 ENERGY_TOL = 1e-6                       # J, largest allowed |E(t) - E(0) - motor work + friction loss|
 
-# PID on the pendulum angle plus PID on the arm angle (target 0), summed; gains set by hand.
+# PID on the pendulum angle plus PID on the arm angle (target 0), summed; gains set by hand or by tune.py.
 # Kp [N m/rad], Ki [N m/(rad s)], Kd [N m s/rad]; the *_arm gains have the same units.
-PID_GAINS = dict(Kp_pendulum=0.1, Ki_pendulum=0.3, Kd_pendulum=0.0054, Kp_arm=-0.005, Ki_arm=-0.005, Kd_arm=-0.002)
+PID_GAINS = dict(Kp_pendulum=0.673346, Ki_pendulum=5.97908e-10, Kd_pendulum=0.0450316, Kp_arm=-0.0738805, Ki_arm=-0.000453746, Kd_arm=-0.0302108)
+
+# Gain tuning (tune.py, which prints new gains to paste into PID_GAINS). It minimizes, summed over the starts, the
+# integral over `horizon` of (pendulum error / max_pendulum_error)^2 + (arm error / max_arm_error)^2
+# + (torque / max_torque)^2. Each start is the pendulum at rest at alpha0 with the arm at 0, on one side of
+# upright only (180 deg + d mirrors 180 deg - d); starts are added one at a time. PID_GAINS is the first guess,
+# and the sign of each gain is kept. Afterwards the tuned gains are run from `check_starts` for `check_t_end`.
+TUNE = dict(starts=deg([175, 170, 165, 160]),
+            horizon=3.0,                        # s, multiple of DT
+            friction=True,
+            max_pendulum_error=deg(5),          # rad
+            max_arm_error=deg(30),              # rad
+            max_torque=0.05,                    # N m, the real motor's limit at 10 V [6]
+            max_iter=200,                       # IPOPT iterations per stage
+            check_starts=deg([140, 145, 150, 155, 160, 165, 170, 175]),
+            check_t_end=10.0)                   # s
 
 # Experiments: x0 = [theta, alpha, theta_dot, alpha_dot]; alpha = 0 hanging down, +-pi upright.
 # Each experiment names its controller and that controller's settings:
@@ -55,7 +70,7 @@ EXPERIMENTS = {
     "pid_near_upright": dict(x0=[0, deg(170), 0, 0], t_end=10.0, friction=True, controller="pid", gains=PID_GAINS),
     "pid_from_rest": dict(x0=[0, 0, 0, 0], t_end=10.0, friction=True, controller="pid", gains=PID_GAINS),
 }
-RUN = ["pid_from_rest"] # list(EXPERIMENTS)
+RUN = ["pid_near_upright"] # list(EXPERIMENTS)
 
 # Output
 RESULTS_DIR = "results"
