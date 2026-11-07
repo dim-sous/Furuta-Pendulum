@@ -61,6 +61,11 @@ def main():
             g = e["gains"]
             label = (f"PID, pendulum: Kp = {g['Kp_pendulum']:g}, Ki = {g['Ki_pendulum']:g}, Kd = {g['Kd_pendulum']:g};   "
                      f"arm: Kp = {g['Kp_arm']:g}, Ki = {g['Ki_arm']:g}, Kd = {g['Kd_arm']:g}")
+        elif e["controller"] == "swing_up":
+            s = e["swing_up"]
+            controller = control.swing_up(e["gains"], **s, dt=c.DT)
+            label = (f"energy swing-up, k = {s['k']:g} N m/J; PID from {np.rad2deg(s['enter']):g}° of upright, "
+                     f"back beyond {np.rad2deg(s['leave']):g}°; |u| ≤ {c.MAX_TORQUE:g} N m")
         else:
             raise ValueError(f"{name}: unknown controller {e['controller']!r}")
         t, x, u, motor_work, friction_loss = simulate(e["x0"], e["t_end"], controller, e["friction"],
