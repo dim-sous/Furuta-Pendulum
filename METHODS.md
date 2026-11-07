@@ -279,9 +279,10 @@ instead of the true state (`estimator.py`, settings `config.EKF`).
 with $\Delta = 2\pi/2048$ = 3.07e-3 rad (0.176°), zero where the model's angles are zero (a calibrated encoder).
 There is no other noise: optical encoders have none to speak of.
 
-**The filter's model.** The filter's model is the plant of section 1 with viscous friction only. The truth
-keeps its Coulomb and Stribeck terms (the least known part of the plant: published values differ by up to
-300×), so the filter never has the truth's model. Unmodelled torques are white noise $w$ on the two joints:
+**The filter's model.** The filter's model is the plant of section 1, with its arm friction identified from
+encoder data in section 8, viscous + Coulomb ($b$ = 9.9945e-4 N m s/rad, $\tau_C$ = 1.1141e-4 N m, the sign function
+smoothed over 0.01 rad/s), and its pendulum friction viscous, the plant's value. The truth keeps its Stribeck law,
+so the filter never has the truth's model. Unmodelled torques are white noise $w$ on the two joints:
 
 ```math
 \dot x = f(x, u, 0) + L(x)\,w, \qquad L = \begin{bmatrix} \dfrac{\partial f}{\partial u} & \dfrac{\partial f}{\partial d} \end{bmatrix},
@@ -289,11 +290,13 @@ keeps its Coulomb and Stribeck terms (the least known part of the plant: publish
 ```
 
 so $w$ enters exactly as the motor torque and a tap do, and $Q_c = \mathrm{diag}(q_{arm}, q_{pend})$ has units
-(N m)² s. The first guess was the dropped Coulomb torque held for one sample, $q = (10^{-4}\ \text{N m})^2\thinspace \Delta t$
-= 1e-11 per joint: a constant torque $\tau$ over $\Delta t$ gives an impulse of variance $(\tau\Delta t)^2$, and white
-noise of intensity $q$ gives $q\thinspace \Delta t$. Tuned by hand against NEES, $q$ = 1e-7 per joint (10⁴ times the
-guess): the smallest value tried at which the filter keeps the pendulum. Below it, the filter grows too sure of
-its own predictions, a count change becomes a reading it considers impossible, and it diverges.
+(N m)² s. Its first guess was the Coulomb torque a viscous-only model leaves out, held for one sample,
+$q = (10^{-4}\ \text{N m})^2\thinspace \Delta t$ = 1e-11 per joint: a constant torque $\tau$ over $\Delta t$ gives an impulse of
+variance $(\tau\Delta t)^2$, and white noise of intensity $q$ gives $q\thinspace \Delta t$. Tuned by hand on a sweep, $q$ = 1e-8 per
+joint: the lowest value at which both EKF experiments keep the pendulum (5e-9 loses it). Below it, the filter
+grows too sure of its own predictions, a count change becomes a reading it considers impossible, and it
+diverges. With a viscous-only arm model the filter needed 1e-7; the identified friction lets it trust its model
+ten times more, which halves its velocity errors and the balancing torque's chatter.
 
 **Predict** (continuous-discrete EKF [18, Alg. 10.24]). Between samples the estimate and its covariance follow
 
@@ -427,7 +430,7 @@ Gaussian approximation biases such likelihoods and makes them too sharp [25, §1
 
 **What is estimated.** $\theta = (b, \tau_C)$: the EKF's arm friction is viscous + Coulomb, i.e. section 1's law with
 breakaway = Coulomb, so that its Stribeck term vanishes; the truth keeps its Stribeck law, outside that class.
-$Q_c$ stays fixed at the EKF's 1e-7: the truth has no process noise, so maximum likelihood would push $Q_c$
+$Q_c$ stays fixed at 1e-7 (`config.LIKELIHOOD`, the EKF's value when step 2a was run): the truth has no process noise, so maximum likelihood would push $Q_c$
 towards 0 until the filter breaks.
 
 **The experiment.** One open-loop record from rest (open loop, so the input is not correlated with the model

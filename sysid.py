@@ -105,12 +105,13 @@ def viscous_coulomb(b, tau_c):
 
 
 def negative_log_likelihood(b, tau_c, y, u):
-    """-sum_k log(cell probability_k) of the EKF with arm friction viscous_coulomb(b, tau_c), run over the encoder
+    """-sum_k log(cell probability_k) of the EKF (config.EKF, but Q_c = config.LIKELIHOOD["Q_c"]) with arm friction
+    viscous_coulomb(b, tau_c), run over the encoder
     readings y (n, 2) and the torques u (n); the first sample, the filter's start, has no update. Returns
     (NLL, None), or (inf, k) if at sample k the filter gave the read cell no positive probability: the filter
     broke there, and the record says nothing beyond it."""
     E = c.EKF
-    estimate = estimator.ekf(viscous_coulomb(b, tau_c), E["friction_pend"], E["Q_c"], E["P0_std"],
+    estimate = estimator.ekf(viscous_coulomb(b, tau_c), E["friction_pend"], [c.LIKELIHOOD["Q_c"]] * 2, E["P0_std"],
                              c.ENCODER_RESOLUTION, c.DT, c.RK4_SUBSTEPS)
     estimate(y[0], 0.0)
     nll = 0.0
@@ -153,7 +154,7 @@ def likelihood_grid(folder):
         print(f"DIAGNOSTIC (not a result): the truth's arm friction is {truth}, inside the EKF's model class")
     print(f"likelihood_grid: {L['duration']:g} s of torque pulses (|u| <= {L['max_torque']:g} N m); arm speed up to "
           f"{speed.max():.2f} rad/s, below 0.4 rad/s {np.mean(speed < 0.4):.0%} of the time; energy balance residual "
-          f"{residual:.1e} J; EKF Q_c = {c.EKF['Q_c'][0]:g} (N m)^2 s")
+          f"{residual:.1e} J; EKF Q_c = {L['Q_c']:g} (N m)^2 s")
     finite = np.isfinite(nll)
     best = np.unravel_index(np.argmin(np.where(finite, nll, np.inf)), nll.shape) if finite.any() else None
     print("  NLL - min over the grid; rows b [N m s/rad], columns tau_C [N m]")
