@@ -20,7 +20,8 @@ def encoder(x):
     return c.ENCODER_RESOLUTION * np.round(x[:2] / c.ENCODER_RESOLUTION)
 
 
-def simulate(x0, t_end, controller, with_friction, dt, substeps, disturbance=lambda t: 0.0, estimate=None):
+def simulate(x0, t_end, controller, with_friction, dt, substeps, disturbance=lambda t: 0.0, estimate=None,
+             friction_arm=c.FRICTION_ARM):
     """Simulates the pendulum from state x0 for t_end seconds.
 
     controller(t, x) gives the motor torque and disturbance(t) the torque on the pendulum's joint, both every
@@ -29,13 +30,14 @@ def simulate(x0, t_end, controller, with_friction, dt, substeps, disturbance=lam
     (x_hat, P, cell_prob) (estimator.py), the estimate made from the encoder readings y.
     Returns times t (n+1), states x (n+1, 4), motor torques u (n), the cumulative motor work and friction loss
     (n+1 each), disturbance torques d (n) and the cumulative disturbance work (n+1), the works integrated
-    alongside the state for the energy balance; and, with an estimator, a dict of its estimates x_hat (n, 4),
+    alongside the state for the energy balance (the arm's friction law: friction_arm, the plant's own by default,
+    other laws for diagnostics only); and, with an estimator, a dict of its estimates x_hat (n, 4),
     covariances P (n, 4, 4) and the probabilities of the read cells (n) at each sample, else None.
     """
     n = round(t_end / dt)
     if not np.isclose(n * dt, t_end, rtol=1e-12, atol=0):
         raise ValueError(f"t_end = {t_end} s is not a multiple of dt = {dt} s")
-    f, P = model.dynamics(with_friction)
+    f, P = model.dynamics(with_friction, friction_arm)
     step = model.rk4_step(f, P, dt, substeps)
     t = dt * np.arange(n + 1)
     x = np.empty((n + 1, 4))

@@ -99,6 +99,22 @@ SYSID = dict(torque_min=3e-4, torque_max=3e-2,  # N m: steady speeds from about 
              levels=20,                         # per direction
              wait=20.0, average=10.0)           # s, multiples of DT
 
+# The arm friction identified by step 1 (printed by sysid.py, pasted here): viscous [N m s/rad], Coulomb [N m].
+FRICTION_ID = dict(viscous=9.9945e-04, coulomb=1.1141e-04)
+
+# Friction identification, step 2a (sysid.py): the likelihood surface. One open-loop experiment from rest records
+# the torques and the encoder readings: torque pulses of `pulse` s, each followed by `coast` s at zero, with
+# amplitudes uniform in +-max_torque from a generator seeded by `seed`. The EKF (config.EKF, its arm friction
+# viscous + Coulomb) runs over the record for each (b, tau_C) of a grid spanning the factors b_range x tau_range
+# of FRICTION_ID; its negative log-likelihood is -sum_k log(cell probability_k) [25, sec. 12.1.1, eqs. (12.5)-(12.6)].
+LIKELIHOOD = dict(duration=300.0, pulse=0.5, coast=0.5, max_torque=6e-3, seed=1,   # s, s, s, N m
+                  b_range=(0.5, 1.5), tau_range=(0.0, 2.5), points=7,              # factors of FRICTION_ID; per axis
+                  truth_arm=None)   # None: the truth is FRICTION_ARM. DIAGNOSTIC ONLY, never a result: a known-answer
+                                    # test with the truth inside the EKF's model class, e.g.
+                                    # dict(FRICTION_ARM, breakaway=FRICTION_ARM["coulomb"]) (viscous + Coulomb)
+
+SYSID_RUN = ["steady_state"]            # which of sysid.py's methods to run: "steady_state" (2 min), "likelihood_grid" (30 min)
+
 # Experiments: x0 = [theta, alpha, theta_dot, alpha_dot]; alpha = 0 hanging down, +-pi upright.
 # Each experiment names its controller and that controller's settings:
 #   "open_loop": torque(t) [N m];   "pid": gains, a dict like PID_GAINS;
