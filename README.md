@@ -20,17 +20,25 @@ uv run python run.py
 ```
 
 `run.py` simulates every experiment named in `config.RUN` with the controller that experiment names, checks
-the run (finite state, energy balance, dissipation), prints the key numbers, and writes a figure
-(`results/<name>.png`) and a real-time video (`results/<name>.mp4`) per experiment. Every parameter and setting
-lives in `config.py`; an experiment is an initial state, a duration, friction on or off, and a controller with
-its settings: a torque signal `torque(t)` for the open-loop controller, gains for the PID.
+the run (finite state, energy balance, dissipation), prints the key numbers, and writes a figure and a
+real-time video per experiment, `results/<controller>/<name>.png` and `.mp4`, one folder per controller. Every
+parameter and setting lives in `config.py`; an experiment is an initial state, a duration, friction on or off,
+and a controller with its settings: a torque signal `torque(t)` for the open-loop controller, gains for the PID.
+
+```
+uv run python tune.py
+```
+
+`tune.py` finds the PID gains by optimization (section 2) and prints them to paste into `config.PID_GAINS`. It
+compiles part of the simulation to C, so it needs `gcc`.
 
 | File | Role |
 |---|---|
-| `config.py` | parameters, PID gains, experiments, output settings |
+| `config.py` | parameters, PID gains and their tuning settings, experiments, output settings |
 | `model.py` | the plant: kinematics, Lagrangian, equations of motion, friction, RK4 step |
-| `control.py` | controllers (`open_loop`, `pid`) |
+| `control.py` | controllers (`open_loop`, `pid`) and the PID formula shared with the tuner |
 | `run.py` | simulation loop, checks, key numbers |
+| `tune.py` | PID gain tuning by optimization |
 | `viz.py` | figures and videos |
 
 ## 1. First-principles model and open-loop simulation
@@ -205,36 +213,36 @@ effective inertia from $I_{p,xx} + m_p d_p^2$ to $M_{22} - M_{12}^2/M_{11}$.
 | torque pulse | 0°, 0° | 0.02 N m for 0.1 s at t = 0.5 s | on | 6.033e-3 | 6.033e-3 | 1.9e-14 |
 | resonant pumping | 0°, 0° | 0.004 sin(2π·2.06 t) N m | on | 5.532e-2 | 5.352e-2 | 1.8e-13 |
 
-**Frictionless release** ([video](results/frictionless_release.mp4)). The pendulum falls from 5° off
+**Frictionless release** ([video](results/open_loop/frictionless_release.mp4)). The pendulum falls from 5° off
 upright, swings through the bottom to −175° and back, periodically, while the arm twists between −15° and
 +18° in reaction. Energy stays at 1.5128e-2 J to within 6.2e-13 J. The small error that remains is RK4's:
 spikes during the fast passages through the bottom and a slow drift, because RK4 does not conserve energy
 exactly.
 
-![frictionless release](results/frictionless_release.png)
+![frictionless release](results/open_loop/frictionless_release.png)
 
-**Release near upright** ([video](results/release_near_upright.mp4)). Same start with friction on. The swing
+**Release near upright** ([video](results/open_loop/release_near_upright.mp4)). Same start with friction on. The swing
 decays within about 6 s and the pendulum comes to rest hanging down. Friction removes 3.031e-2 J, exactly the
 potential-energy drop from the release point to hanging, $m_p g d_p (1 - \cos 175°)$.
 
-![release near upright](results/release_near_upright.png)
+![release near upright](results/open_loop/release_near_upright.png)
 
-**Release horizontal** ([video](results/release_horizontal.mp4)). The pendulum starts at 90°. Friction removes
+**Release horizontal** ([video](results/open_loop/release_horizontal.mp4)). The pendulum starts at 90°. Friction removes
 $m_p g d_p$ = 1.519e-2 J by the time it hangs at rest.
 
-![release horizontal](results/release_horizontal.png)
+![release horizontal](results/open_loop/release_horizontal.png)
 
-**Torque pulse** ([video](results/torque_pulse.mp4)). A 0.1 s pulse of 0.02 N m does 6.0e-3 J of work, mostly
+**Torque pulse** ([video](results/open_loop/torque_pulse.mp4)). A 0.1 s pulse of 0.02 N m does 6.0e-3 J of work, mostly
 spinning the arm; 1.2e-3 J of it is already lost to friction while the pulse lasts. The pendulum first swings
 backwards (it lags the accelerating arm), then oscillates and decays; the arm coasts to 109° and stops. All the
 motor work ends up as friction loss.
 
-![torque pulse](results/torque_pulse.png)
+![torque pulse](results/open_loop/torque_pulse.png)
 
-**Resonant pumping** ([video](results/resonant_pumping.mp4)). A small torque at the 2.06 Hz small-swing
+**Resonant pumping** ([video](results/open_loop/resonant_pumping.mp4)). A small torque at the 2.06 Hz small-swing
 frequency builds the swing up to about ±27°, where friction removes per cycle what the motor puts in.
 
-![resonant pumping](results/resonant_pumping.png)
+![resonant pumping](results/open_loop/resonant_pumping.png)
 
 ### Assumptions and known gaps
 
@@ -302,6 +310,59 @@ Both runs blow up within 20 ms; their plots end at the blow-up.
 - **PID from rest.** The first torque is −π N m (the error hanging down is −π); the run blows up by
   t = 0.015 s.
 
+### Gain tuning by optimization
+
+`uv run python tune.py` finds the six gains by optimization, in about 40 s, and prints them to paste into
+`config.PID_GAINS`. Its settings are `config.TUNE`.
+
+**The problem.** From each start $i$ (pendulum at rest at $\alpha_0$, arm at 0) the closed loop is simulated for
+a horizon $T$ = 3 s with exactly the plant, RK4 sub-steps, held torque and PID formula of the experiments
+(`control.pid_step` serves both). The tuner minimizes
+
+$$
+J = \sum_i \sum_k \left[ \left(\frac{e_k}{e_{max}}\right)^2 + \left(\frac{e_{a,k}}{\theta_{max}}\right)^2
+ + \left(\frac{u_k}{u_{max}}\right)^2 \right] \Delta t ,
+$$
+
+an integral of squared errors and torque in which each term is divided by its largest acceptable value
+(Bryson's rule [16]): $e_{max}$ = 5°, $\theta_{max}$ = 30°, $u_{max}$ = 0.05 N m, the real motor's limit at
+10 V [6]. Torque is penalized, not limited, as the plant has no torque limit.
+
+**The method.** CasADi builds the simulation symbolically, so $J$ has exact derivatives [2], and IPOPT [14]
+minimizes it with a limited-memory BFGS Hessian [15]. The unknowns are the gains divided by the current
+`PID_GAINS`, so all six share one scale; each is bounded to keep that gain's sign (zero allowed), since the
+pendulum gains must be positive and the arm gains negative. Three things make it fast enough:
+
+- one sample of the closed loop is compiled to C (it needs `gcc`), about 30× faster than CasADi's interpreter;
+- the starts are simulated on parallel threads;
+- only one side of upright is used: a start at 180° + δ mirrors one at 180° − δ, with the same cost (the plant
+  and the controller are odd in $(\theta, \alpha - \pi)$; checked numerically to 13 digits).
+
+The starts (175°, 170°, 165°, 160°) are added one at a time, each stage starting from the previous one's gains:
+the hand-tuned first guess catches 165°–175° but blows up from 160°, where the optimizer could not even start.
+
+**Results.** Starting from the hand-tuned gains, every stage converges (IPOPT: Solve_Succeeded):
+
+| | $K_p$ | $K_i$ | $K_d$ |
+|---|---|---|---|
+| pendulum | 0.673 | 0 (6e-10) | 0.0450 |
+| arm | −0.0739 | −0.000454 | −0.0302 |
+
+The optimizer drops the pendulum's integral: with the arm fed back, the arm loop supplies the steady torque
+against arm friction. Run for 10 s from rest with the arm at 0:
+
+| $\alpha_0$ | max $\lvert\alpha - 180°\rvert$ | final $\lvert\alpha - 180°\rvert$ | final $\theta$ | peak $\lvert u\rvert$ |
+|---|---|---|---|---|
+| 140°, 145° | blows up (0.2 s, 0.3 s) | | | |
+| 150° | 30.0° | 0.000° | −0.09° | 0.353 N m |
+| 160° | 20.0° | 0.000° | −0.09° | 0.235 N m |
+| 170° | 10.0° | 0.000° | −0.04° | 0.118 N m |
+| 175° | 5.0° | 0.000° | −0.02° | 0.059 N m |
+
+So the gains catch from up to 30° off upright (150° and 155° were not tuned for), with the arm back within 0.1°.
+Two caveats: every start beyond 5° needs more torque than the real motor's 0.05 N m (up to 7× at 150°), and the
+gains are tuned and tested on the same model, so this is a best case; the real rig differs.
+
 ## References
 
 1. B. S. Cazzolato, Z. Prime, "On the dynamics of the Furuta pendulum", *Journal of Control Science and
@@ -329,3 +390,8 @@ Both runs blow up within 20 ms; their plots end at the blow-up.
 13. Quanser, Quanser_Academic_Resources (GitHub, branch dev-windows): the Qube-Servo 3 pendulum control models
     in `6_teaching/1_Controls/Qube_Servo_3/sp6_pendulum_control/` (fixed step 0.002 s), and
     `0_libraries/python/pal/products/qube.py` (class `QubeServo2`, default 500 Hz).
+14. A. Wächter, L. T. Biegler, "On the implementation of an interior-point filter line-search algorithm for
+    large-scale nonlinear programming", *Mathematical Programming* 106(1), 25–57, 2006.
+15. J. Nocedal, S. J. Wright, *Numerical Optimization*, 2nd ed., Springer, 2006, §7.2.
+16. A. E. Bryson, Y.-C. Ho, *Applied Optimal Control*, Hemisphere, 1975 (the rule of choosing quadratic-cost
+    weights as 1/(largest acceptable value)²; page not verified).

@@ -7,8 +7,8 @@ Where this file and that doc disagree, this file wins: it records the user's lat
 
 ## Scope
 
-Current: first-principles model, open-loop simulations, PID control (pendulum and arm loops, summed), plots,
-videos.
+Current: first-principles model, open-loop simulations, PID control (pendulum and arm loops, summed) with gains
+tuned by optimization, plots, videos.
 Nothing else.
 
 Work grows in increments the user picks. The doc's stage order ("work through the stages in order") does
@@ -29,18 +29,21 @@ an increment is done, show its results (plots, key numbers) and ask what comes n
 Flat files in the project root. A file is created only when the work needs it.
 
 ```
-config.py    every parameter and setting: plant, PID gains, EXPERIMENTS (named test matrix; each names its
-             controller and that controller's settings) + RUN, output
+config.py    every parameter and setting: plant, PID gains, TUNE, EXPERIMENTS (named test matrix; each names
+             its controller and that controller's settings) + RUN, output
 model.py     plant: kinematics -> Lagrangian -> equations of motion (CasADi), friction, RK4 step
-control.py   controllers (open_loop, pid), chosen per experiment
+control.py   controllers (open_loop, pid), chosen per experiment; pid_step, the PID formula as a CasADi
+             function, shared by the simulation and the tuner
 run.py       simulation loop per experiment, checks, key numbers
-viz.py       figures (PNG) and videos (MP4), written to results/ (gitignored)
+tune.py      PID gain tuning: IPOPT on the closed loop rolled out in CasADi; prints gains to paste
+viz.py       figures (PNG) and videos (MP4), written to results/<controller>/ (gitignored)
 ```
 
 ## Commands
 
 ```
 uv run python run.py     run the experiments in config.RUN
+uv run python tune.py    tune the PID gains (needs gcc: one closed-loop sample is JIT-compiled)
 uv add <package>         add a library, only when a feature first needs it
 ```
 
