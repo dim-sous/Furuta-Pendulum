@@ -1,0 +1,10 @@
+[project]
+name = "furuta-pendulum"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "casadi>=3.8.2",
+    "imageio-ffmpeg>=0.7.0",
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.4",
+]
