@@ -400,6 +400,52 @@ how that mismatch spreads into $\hat b$ and $\hat\tau_C$. Static least squares i
 predictor that has no dynamics, and maximum likelihood for i.i.d. Gaussian errors [26, §7.2–7.4]; step 2 will
 use the transients too.
 
+## 9. Friction identification, step 2a: the likelihood surface
+
+Step 1 used steady states only. Step 2 uses the transients too, by maximum likelihood through the EKF of
+section 7; step 2a only maps the likelihood, before any optimizer.
+
+**The likelihood.** By the prediction-error decomposition [25, §12.1.1, eqs. (12.5)–(12.6)], the probability of
+the whole record is the product of one-step predictive probabilities:
+
+```math
+p(y_{1:N} \mid \theta) = \prod_{k} p(y_k \mid y_{1:k-1}, \theta),
+\qquad p(y_k \mid y_{1:k-1}) = \int p(y_k \mid x)\thinspace p(x \mid y_{1:k-1})\thinspace dx .
+```
+
+The encoder is noise-free, so $p(y_k \mid x) = 1$ if $Hx$ lies in the reading's cell $C_k$ and 0 otherwise, and
+the integral is the probability of $C_k$ under the predicted belief. Under the EKF's Gaussian prediction that is
+exactly the cell probability $\alpha_{C,k}$ of section 7, so
+
+```math
+-\log p(y_{1:N} \mid \theta) = -\sum_k \log \alpha_{C,k}(\theta) .
+```
+
+For cells small against the prediction's spread this tends to the Gaussian-innovation likelihood of
+Kristensen, Madsen and Jørgensen (2004) with $R = S$, plus a constant; ours are not small. The filter's
+Gaussian approximation biases such likelihoods and makes them too sharp [25, §12.3.3].
+
+**What is estimated.** $\theta = (b, \tau_C)$: the EKF's arm friction is viscous + Coulomb, i.e. section 1's law with
+breakaway = Coulomb, so that its Stribeck term vanishes; the truth keeps its Stribeck law, outside that class.
+$Q_c$ stays fixed at the EKF's 1e-7: the truth has no process noise, so maximum likelihood would push $Q_c$
+towards 0 until the filter breaks.
+
+**The experiment.** One open-loop record from rest (open loop, so the input is not correlated with the model
+error through feedback): torque pulses of 0.5 s, each followed by 0.5 s at zero, with amplitudes uniform in
+±6e-3 N m from a seeded generator, for 300 s. Only the torques and the encoder readings are kept.
+
+**The surface.** The EKF runs over the record for each $(b, \tau_C)$ of a 7×7 grid spanning 0.5–1.5 times step 1's
+$b$ and 0–2.5 times its $\tau_C$ (`config.LIKELIHOOD`), the grid points in parallel processes. A point where the
+filter gives a read cell no positive probability is reported as broken. The truth here is deterministic: the
+curvature of the surface says how sharp the likelihood is under the assumed $Q_c$, not how far the minimum is
+from the truth.
+
+**Known limitation: through this filter the likelihood is biased.** A known-answer diagnostic (`truth_arm` in
+`config.LIKELIHOOD`, which puts the truth inside the model class on purpose) still puts the minimum at about
++13% on $b$ and −66% on $\tau_C$ at $Q_c$ = 1e-7, so the bias comes from the filter's Gaussian approximation, not from
+the Stribeck mismatch. At $Q_c$ = 1e-8 the minimum sits within one grid cell of the truth, but the filter then
+breaks for most parameters away from it. Step 1 remains the estimate to trust.
+
 ## References
 
 1. B. S. Cazzolato, Z. Prime, "On the dynamics of the Furuta pendulum", *Journal of Control Science and
@@ -454,6 +500,7 @@ use the transients too.
     eqs. (18)–(21). The approach goes back to R. E. Curry, W. E. Vander Velde, J. E. Potter, *IEEE Trans.
     Information Theory* 16(2), 152–161, 1970.
 25. S. Särkkä, *Bayesian Filtering and Smoothing*, Cambridge University Press, 2013, Appendix A.1, Lemma A.2,
-    eqs. (A.4)–(A.5) (the conditional distribution of jointly Gaussian variables).
+    eqs. (A.4)–(A.5) (the conditional distribution of jointly Gaussian variables); §12.1.1, eqs. (12.5)–(12.6)
+    (the prediction-error decomposition of the likelihood); §12.3.3 (bias of Gaussian-filter likelihoods).
 26. L. Ljung, *System Identification: Theory for the User*, 2nd ed., Prentice Hall, 1999: §7.2–7.4 (prediction-error
     methods, linear regression and least squares, p. 203; maximum likelihood, p. 212), Appendix II (pp. 543, 551).

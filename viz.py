@@ -169,6 +169,45 @@ def friction_figure(path, t, u, x, torques, omega, k_mid, b, tau_c, true_frictio
     plt.close(fig)
 
 
+def likelihood_figure(path, b_grid, tau_grid, nll, step1, truth, settings, failed_checks, diagnostic=False):
+    """The likelihood surface (sysid.py, step 2a): the EKF's negative log-likelihood above its grid minimum, as
+    filled contours over (b, tau_C), one hue from light (near the minimum) to dark; the grid points, the grid
+    minimum, step 1's estimate step1 = (b, tau_C) and the truth's viscous and Coulomb values; grid points where the
+    filter broke are crossed."""
+    palette, fontsize = LIGHT, 10
+    fig, ax = plt.subplots(figsize=(9, 7), facecolor=palette["surface"], layout="constrained")
+    _style(ax, palette, fontsize)
+    finite = np.isfinite(nll)
+    excess = np.where(finite, nll - np.min(nll[finite]), np.nan)
+    levels = [0, 0.5, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
+    levels = [lv for lv in levels if lv < np.nanmax(excess)] + [np.nanmax(excess)]
+    B, T = np.meshgrid(b_grid, tau_grid, indexing="ij")
+    filled = ax.contourf(B, T, excess, levels=levels, cmap="Purples")
+    ax.contour(B, T, excess, levels=levels, colors=palette["surface"], linewidths=0.8)
+    bar = fig.colorbar(filled, ax=ax)
+    bar.set_label("NLL − grid minimum", color=palette["ink"], fontsize=fontsize)
+    bar.ax.tick_params(labelcolor=palette["muted"], labelsize=fontsize)
+    ax.plot(B[finite], T[finite], ".", color=palette["muted"], ms=3)
+    if not finite.all():
+        ax.plot(B[~finite], T[~finite], "x", color=palette["critical"], ms=8, mew=2, label="EKF broke")
+    i, j = np.unravel_index(np.nanargmin(excess), excess.shape)
+    ax.plot(b_grid[i], tau_grid[j], "o", color=palette["ink"], ms=9, mfc="none", mew=2, label="grid minimum")
+    ax.plot(*step1, "s", color=palette["arm"], ms=8, label="step 1 (steady states)")
+    ax.plot(*truth, "*", color=palette["friction"], ms=14,
+            label="truth (viscous, Coulomb)" if diagnostic else "truth (viscous, Coulomb; plus a Stribeck peak)")
+    ax.set_xlabel("viscous b [N m s/rad]")
+    ax.set_ylabel("Coulomb τ_C [N m]")
+    ax.set_title(f"{settings['duration']:g} s of open-loop torque pulses, EKF Q_c = {c.EKF['Q_c'][0]:g} (N m)² s",
+                 loc="left", fontsize=fontsize, color=palette["muted"])
+    _legend(ax, palette, fontsize, loc="upper left", bbox_to_anchor=(0.0, -0.1), ncol=2)
+    _flag(ax, palette, fontsize, failed_checks, width=90)
+    fig.suptitle("DIAGNOSTIC, truth inside the model class (viscous + Coulomb): the likelihood surface" if diagnostic
+                 else "friction identification, step 2a: the likelihood surface",
+                 color=palette["critical"] if diagnostic else palette["ink"], fontsize=13)
+    fig.savefig(path, dpi=150, facecolor=palette["surface"])
+    plt.close(fig)
+
+
 def video(path, title, controller, t, x, u, d, failed_checks):
     """Real-time MP4: 3D view of the pendulum with a fading tip trail, over scrolling traces of the pendulum
     angle (the 3D view shows the arm) and the motor torque (labelled with the controller); a dashed line marks
