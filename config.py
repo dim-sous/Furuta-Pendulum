@@ -95,7 +95,40 @@ EKF = dict(friction_arm=dict(viscous=FRICTION_ID["viscous"], coulomb=FRICTION_ID
            friction_pend=dict(FRICTION_PEND, coulomb=0.0, breakaway=0.0),
            Q_c=[1e-8, 1e-8],                    # (N m)^2 s, arm joint, pendulum joint
            P0_std=[ENCODER_RESOLUTION / 12**0.5] * 2 + [1.0, 1.0],   # rad, rad, rad/s, rad/s
-           min_cell_prob=1e-6)
+           min_cell_prob=1e-6,
+           # An unknown push on the pendulum's joint as a fifth state, fading as a first-order Gauss-Markov process
+           # [34, 28] (estimator.ekf), e.g. dict(tau=0.05, std=0.005) [s, N m]; None: four states only. Tried
+           # 2026-11-08 against taps (FINDINGS.md): no push size worked for both controllers, so off.
+           disturbance=None)
+
+# Nonlinear MPC (control.nmpc, METHODS.md section 10): one law swings up and balances, with no switching. Every
+# `period` it solves the optimal control problem over the next `horizon` s, predicting with the EKF's model
+# (identified arm friction), and holds the first torque until its next sample (the plant and the EKF keep DT).
+# period: 20-40x the closed-loop bandwidth [31], the bandwidth about twice the upright pendulum's unstable pole,
+# 12.9 rad/s [32], gives 6-12 ms; 5 ms, the fast end, worked on a real Furuta pendulum, whose swing-up failed above
+# 9 ms [30]. substeps: RK4 steps per period in the prediction. Against a fine-step reference, 1.5 s predictions
+# along the energy swing-up erred by at most 0.045 deg with 3 steps (a quarter of an encoder count), 0.146 deg
+# with 2 (83% of a count: too little margin, as the error is not monotone in the step count near the Coulomb
+# band) (2026-11-08). horizon: published swing-up NMPCs predict about the whole swing-up ([30]: 350 ms ahead for a
+# 392 ms swing-up); this one swings up in ~0.55 s. Experiments growing from balancing to swing-up (2026-11-08,
+# FINDINGS.md): 0.25 s balanced but left the arm unsettled, 0.5 s settled it and caught the pendulum from every
+# start tried, hanging rest included. Cost: the PID tuner's scales (Bryson's rule [16]), periodic in both angles,
+# plus the torque change per sample; no terminal ingredients [29]. IPOPT [14] to convergence every sample, exact
+# Hessian. ipopt_warm: the options added from the second solve on, which starts from the previous solution and
+# its multipliers; with a small initial barrier parameter IPOPT stays near that start (measured 2026-11-08: about
+# 3 iterations per sample once the swing-up is under way, 10-65 in its first 0.2 s, against 24-88 without).
+NMPC = dict(period=0.005,                                   # s, multiple of DT
+            substeps=3,                                     # RK4 steps per period
+            horizon=0.5,                                    # s, multiple of period
+            max_pendulum_error=TUNE["max_pendulum_error"],  # rad
+            max_arm_error=TUNE["max_arm_error"],            # rad
+            max_torque=TUNE["max_torque"],                  # N m
+            max_torque_change=0.025,                        # N m per sample (5 ms): the full range in about 10 ms
+            friction_arm=EKF["friction_arm"], friction_pend=EKF["friction_pend"],
+            ipopt=dict(tol=1e-7, max_iter=3000, print_level=0, sb="yes"),
+            ipopt_warm=dict(warm_start_init_point="yes", mu_init=1e-8, warm_start_bound_push=1e-9,
+                            warm_start_bound_frac=1e-9, warm_start_slack_bound_push=1e-9,
+                            warm_start_slack_bound_frac=1e-9, warm_start_mult_bound_push=1e-9))
 
 # Friction identification, step 1 (sysid.py): from rest, with no controller, the motor torque steps through
 # `levels` log-spaced magnitudes per direction, run monotonically from -torque_max to +torque_max as in Quanser's own
@@ -123,7 +156,7 @@ SYSID_RUN = ["steady_state"]            # which of sysid.py's methods to run: "s
 # Experiments: x0 = [theta, alpha, theta_dot, alpha_dot]; alpha = 0 hanging down, +-pi upright.
 # Each experiment names its controller and that controller's settings:
 #   "open_loop": torque(t) [N m];   "pid": gains, a dict like PID_GAINS;
-#   "swing_up": gains (the PID's) and swing_up, a dict like SWING_UP.
+#   "swing_up": gains (the PID's) and swing_up, a dict like SWING_UP;   "nmpc": nmpc, a dict like NMPC.
 # Optional: disturbance(t) [N m], a torque on the pendulum's joint (zero if absent); state, what the controller
 # sees: "true" (the true state, the default) or "ekf" (the EKF's estimate from the encoders).
 EXPERIMENTS = {
@@ -146,10 +179,23 @@ EXPERIMENTS = {
         x0=[0, 0, 0, 0], t_end=10.0, friction=True, controller="swing_up", gains=PID_GAINS, swing_up=SWING_UP,
         disturbance=lambda t, size=size: size if TAP["t"] <= t < TAP["t"] + TAP["duration"] else 0.0)
        for size in TAP["sizes"]},
+    "nmpc_swing_up_from_rest": dict(x0=[0, 0, 0, 0], t_end=10.0, friction=True, controller="nmpc", nmpc=NMPC),
+    **{f"nmpc_tap_{1000 * size:g}mNm": dict(                       # the swing_up_tap experiments, on the NMPC
+        x0=[0, 0, 0, 0], t_end=10.0, friction=True, controller="nmpc", nmpc=NMPC,
+        disturbance=lambda t, size=size: size if TAP["t"] <= t < TAP["t"] + TAP["duration"] else 0.0)
+       for size in TAP["sizes"]},
 }
 EXPERIMENTS |= {f"{name}_ekf": dict(EXPERIMENTS[name], state="ekf")      # twins whose controller sees the EKF
-                for name in ("pid_near_upright", "swing_up_from_rest")}
-RUN = ["pid_near_upright_ekf", "swing_up_from_rest_ekf"] # list(EXPERIMENTS)
+                for name in ("pid_near_upright", "swing_up_from_rest", "nmpc_swing_up_from_rest",
+                             *(f"{c}_tap_{1000 * size:g}mNm" for c in ("swing_up", "nmpc") for size in TAP["sizes"]))}
+RUN = ["swing_up_from_rest", "nmpc_swing_up_from_rest"] # list(EXPERIMENTS)
+
+# Comparisons: overlays of saved runs (results/compare/<name>.png), drawn by run.py once all of a comparison's runs
+# have been saved. The energy swing-up + PID against the NMPC on the same tasks, with the true state and the EKF.
+COMPARE = {f"{task}{state}": [f"{benchmark}{state}", f"nmpc_{task}{state}"]
+           for task, benchmark in [("swing_up_from_rest", "swing_up_from_rest"),
+                                   *((f"tap_{1000 * s:g}mNm", f"swing_up_tap_{1000 * s:g}mNm") for s in TAP["sizes"])]
+           for state in ("", "_ekf")}
 
 # Output
 RESULTS_DIR = "results"

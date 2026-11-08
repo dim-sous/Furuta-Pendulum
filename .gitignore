@@ -3,3 +3,4 @@ __pycache__/
 results/
 .claude/settings.local.json
 FINDINGS.md
+references/
