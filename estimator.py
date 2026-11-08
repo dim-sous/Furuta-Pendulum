@@ -8,16 +8,21 @@ from scipy.special import ndtr, owens_t        # standard normal CDF; Owen's T f
 import model
 
 
-def ekf(friction_arm, friction_pend, Q_c, P0_std, resolution, dt, substeps):
+def ekf(friction_arm, friction_pend, Q_c, P0_std, resolution, dt, substeps, disturbance=None):
     """Builds estimator(y, u_prev) -> (x_hat, P, cell_prob), called once per sample period dt with the encoder
     readings y = [theta, alpha] and the motor torque held over the period that just ended.
 
     The filter's model is xdot = f(x, u, 0) + L(x) w: the plant's equations of motion with the friction laws
     friction_arm and friction_pend, plus white torque noise w on the arm's and the pendulum's joints, of
     intensity diag(Q_c) [(N m)^2 s]. L = [df/du, df/dd], so w enters exactly as the motor torque and a tap do.
+    With `disturbance` = dict(tau, std), the state gains an unknown torque d on the pendulum's joint (a push, e.g.
+    a tap), xdot = f(x, u, d) + L w, modelled as a first-order Gauss-Markov process ddot = -d / tau + w_d [34]: a
+    push the filter expects to fade with time constant tau [s], of stationary standard deviation std [N m], so
+    w_d's intensity is 2 std^2 / tau. This is the disturbance augmentation of offset-free estimation [28, sec. 1.5,
+    5.5] with a decaying rather than a random-walk disturbance.
 
-    Predict [18, Alg. 10.24]: from one sample to the next, the estimate and its covariance follow
-        dx/dt = f(x, u, 0),    dP/dt = A P + P A^T + L diag(Q_c) L^T,    A = df/dx at the estimate,
+    Predict [18, Alg. 10.24]: from one sample to the next, the estimate z (x, and d if any) and its covariance follow
+        dz/dt = g(z, u),    dP/dt = A P + P A^T + G W G^T,    A = dg/dz at the estimate, G = dg/dw,
     integrated together over dt in `substeps` RK4 steps with u held (zero-order hold, as the plant).
     Update: a reading says only that the true angles z = H x, H = [I 0], lie in its count cell, y +- resolution/2
     in each angle. With the predicted belief z ~ N(H x, S), S = H P H^T, let m and V be the mean and covariance of
@@ -26,18 +31,30 @@ def ekf(friction_arm, friction_pend, Q_c, P0_std, resolution, dt, substeps):
     and the belief is taken as Gaussian again with that mean and covariance. cell_prob is the belief's
     probability of the reported cell: how surprising the reading was.
 
-    The first call returns the start, x_hat = [y, 0, 0] and P = diag(P0_std)^2, without an update (that would
-    count the first reading twice); its cell_prob is NaN.
+    The first call returns the start, x_hat = [y, 0, 0] and P = diag(P0_std)^2 (d: 0, with variance std^2),
+    without an update (that would count the first reading twice); its cell_prob is NaN. x_hat and P returned are
+    always the four states' (the controllers see those); d stays inside the filter.
     """
     f, _ = model.dynamics(True, friction_arm, friction_pend)
-    x, P, u, d = ca.SX.sym("x", 4), ca.SX.sym("P", 4, 4), ca.SX.sym("u"), ca.SX.sym("d")
-    xdot = f(x, u, d)
-    linearised = ca.Function("linearised", [x, u, d], [xdot, ca.jacobian(xdot, x), ca.jacobian(xdot, ca.vertcat(u, d))])
-    W = ca.diag(ca.DM(Q_c))
+    n = 4 if disturbance is None else 5
+    x, P, u = ca.SX.sym("x", n), ca.SX.sym("P", n, n), ca.SX.sym("u")
+    if disturbance is None:
+        w = ca.SX.sym("w", 2)                                   # torque noise on the arm's and pendulum's joints
+        xdot = f(x, u + w[0], w[1])
+        W = ca.diag(ca.DM(Q_c))
+    else:
+        tau = disturbance["tau"]
+        w = ca.SX.sym("w", 3)                                   # ... and the push's own noise
+        xdot = ca.vertcat(f(x[:4], u + w[0], x[4] + w[1]), -x[4] / tau + w[2])
+        W = ca.diag(ca.DM([*Q_c, 2 * disturbance["std"]**2 / tau]))
+    zero = ca.DM.zeros(w.shape)
+    linearised = ca.Function("linearised", [x, u], [ca.substitute(xdot, w, zero),
+                                                    ca.substitute(ca.jacobian(xdot, x), w, zero),
+                                                    ca.substitute(ca.jacobian(xdot, w), w, zero)])
 
     def ode(xs, Ps):
-        xdot, A, L = linearised(xs, u, 0)
-        return xdot, A @ Ps + Ps @ A.T + L @ W @ L.T
+        xdot, A, G = linearised(xs, u)
+        return xdot, A @ Ps + Ps @ A.T + G @ W @ G.T
 
     h = dt / substeps
     xs, Ps = x, P
@@ -55,8 +72,9 @@ def ekf(friction_arm, friction_pend, Q_c, P0_std, resolution, dt, substeps):
     def estimator(y, u_prev):
         nonlocal x_hat, P_hat
         if x_hat is None:
-            x_hat, P_hat = np.concatenate([y, [0.0, 0.0]]), np.diag(np.square(P0_std))
-            return x_hat, P_hat, np.nan
+            x_hat = np.concatenate([y, np.zeros(n - 2)])
+            P_hat = np.diag(np.square(list(P0_std) + ([] if disturbance is None else [disturbance["std"]])))
+            return x_hat[:4], P_hat[:4, :4], np.nan
         x_pred, P_pred = (np.asarray(a) for a in predict(x_hat, P_hat, u_prev))
         x_pred = x_pred.ravel()
         S = P_pred[:2, :2]
@@ -64,7 +82,7 @@ def ekf(friction_arm, friction_pend, Q_c, P0_std, resolution, dt, substeps):
         K = np.linalg.solve(S.T, P_pred[:, :2].T).T                   # K S = P H^T
         x_hat = x_pred + K @ (m - x_pred[:2])
         P_hat = P_pred - K @ (S - V) @ K.T
-        return x_hat, P_hat, cell_prob
+        return x_hat[:4], P_hat[:4, :4], cell_prob
 
     return estimator
 

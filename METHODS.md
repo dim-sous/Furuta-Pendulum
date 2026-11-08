@@ -356,7 +356,19 @@ again. On a still pendulum with no process noise, the belief's std after 10, 100
 0.58, 0.45 and 0.38 of the exact $\Delta/\sqrt{12}$ (with the white-noise update: 0.32, 0.10, 0.03). Every filter
 whose belief is a single Gaussian shares this; the established exact remedies carry the cell in the belief
 (particle filters, set-membership bounds) or change the measurement (updates at the instants a count edge is
-crossed).
+crossed). The effect grows with the time spent on one reading: under the NMPC of section 10, whose torque is
+smoother than the PID's, the pendulum's reading changes 28 times a second while balancing against the PID's 69,
+and the filter's smallest cell probability falls from 9.1e-5 to 2.9e-6, near the check.
+
+**Optional: a push state.** `config.EKF["disturbance"] = dict(tau, std)` adds an unknown torque $d$ on the
+pendulum's joint as a fifth state, a first-order Gauss-Markov process $\dot d = -d/\tau + w_d$ [34] of stationary
+standard deviation `std` (so $w_d$ has intensity $2\,\mathrm{std}^2/\tau$): the disturbance augmentation of
+offset-free estimation [28, §1.5, §5.5] with a disturbance that fades rather than a random walk. It is off. Tried
+against taps ($\tau$ = 50 ms, std 1–20 mN m), it let the energy swing-up + PID survive taps up to 20 mN m at 2.3×
+the chatter (std 5 mN m), but with the NMPC every setting made balancing itself break: the filter explains
+quantization steps as pushes, and the double counting above makes the resulting surprises run away. A rare,
+brief push is what a single constant-intensity model cannot express; a two-mode (quiet / pushed) filter is
+the documented next step.
 
 ## 8. Friction identification, step 1: the steady-state friction curve
 
@@ -449,6 +461,47 @@ from the truth.
 the Stribeck mismatch. At $Q_c$ = 1e-8 the minimum sits within one grid cell of the truth, but the filter then
 breaks for most parameters away from it. Step 1 remains the estimate to trust.
 
+## 10. Nonlinear MPC
+
+One law swings the pendulum up from hanging rest and balances it, with no switching (`control.nmpc`, settings
+`config.NMPC`). Every $\Delta$ = 5 ms it solves, from the state it sees ($x$, or the EKF's $\hat x$) and the torque
+$u_{-1}$ it applied the sample before,
+
+```math
+\min_{u_0, \dots, u_{N-1}} \;\Delta \sum_{k=0}^{N-1} \left[ \frac{2(1 + \cos\alpha_k)}{e_{max}^2} + \frac{2(1 - \cos\theta_k)}{\theta_{max}^2}
++ \left(\frac{u_k}{u_{max}}\right)^2 + \left(\frac{u_k - u_{k-1}}{\delta u_{max}}\right)^2 \right]
+\quad \text{s.t.}\quad x_0 = x,\;\; x_{k+1} = F(x_k, u_k),\;\; |u_k| \le u_{max},
+```
+
+and applies $u_0$ for the next 5 ms; the plant and the EKF keep their 1 ms step.
+
+- **Sample period.** 20–40× the closed-loop bandwidth [31], the bandwidth about twice the upright pendulum's
+  unstable pole, 12.9 rad/s [32], gives 6–12 ms; 5 ms, the fast end, worked on a real Furuta pendulum whose
+  swing-up failed above 9 ms [30].
+- **Horizon** $N\Delta$ = 0.5 s ($N$ = 100). Published swing-up NMPCs predict about the whole swing-up [30]; this one
+  swings up in about 0.55 s. Growing the task from balancing at 170° to swing-up from rest: 0.25 s balanced but
+  left the arm unsettled, 0.5 s settled it and caught the pendulum from 150°, 120°, 90° and hanging rest.
+- **Prediction model.** The equations of motion of section 1 with the EKF's friction (section 7: the arm's as
+  identified in section 8), never the truth's Stribeck law. $F$ is 3 RK4 steps of 5/3 ms with $u$ held: against a
+  fine-step reference, 1.5 s predictions along the energy swing-up erred by at most 0.045° (a quarter of an
+  encoder count), 2 steps by 0.146°.
+- **Cost.** Each term is a quantity over its largest acceptable value, squared (Bryson's rule [16]), with the PID
+  tuner's scales of section 4: $e_{max}$ = 5°, $\theta_{max}$ = 30°, $u_{max}$ = 0.05 N m, so both controllers chase the same
+  objective. Near upright $2(1 + \cos\alpha) \approx (\alpha - \pi)^2$ and $2(1 - \cos\theta) \approx \theta^2$, yet the terms are
+  periodic: a whole turn of either angle costs nothing, and no angle needs wrapping. $\delta u_{max}$ = 0.025 N m per
+  sample (the full range in about 10 ms) penalizes chatter. Velocities are not weighted.
+- **No terminal cost or constraint**: stability then rests on the horizon being long enough [29].
+- **Solver.** Multiple shooting [27]: the predicted states are unknowns too, tied by the dynamics. IPOPT [14]
+  solves each problem to convergence (tolerance 1e-7) with the exact Hessian. CasADi [2] compiles the problem's
+  functions to C once (gcc, about 2 min) and caches the library in the system's temporary folder. The first
+  solve starts from states on a straight line to the nearest upright, at rest, torque 0 [33], which picks the
+  swing direction (at hanging rest the cost is flat by symmetry). Every later solve starts from the previous
+  solution shifted by one sample, multipliers included, with a small initial barrier parameter, so IPOPT warm-
+  starts near it: about 3 iterations per sample once the swing-up is under way.
+- **Failures.** A solve that does not converge is reported as a failed check with IPOPT's status; from then on
+  the controller gives NaN, so the run blows up there and is plotted up to that moment.
+- **Run time** on a laptop, one core: about 1 min for a 10 s run on the true state, about 2.5 min with the EKF.
+
 ## References
 
 1. B. S. Cazzolato, Z. Prime, "On the dynamics of the Furuta pendulum", *Journal of Control Science and
@@ -507,3 +560,19 @@ breaks for most parameters away from it. Step 1 remains the estimate to trust.
     (the prediction-error decomposition of the likelihood); §12.3.3 (bias of Gaussian-filter likelihoods).
 26. L. Ljung, *System Identification: Theory for the User*, 2nd ed., Prentice Hall, 1999: §7.2–7.4 (prediction-error
     methods, linear regression and least squares, p. 203; maximum likelihood, p. 212), Appendix II (pp. 543, 551).
+27. H. G. Bock, K. J. Plitt, "A multiple shooting algorithm for direct solution of optimal control problems",
+    *IFAC Proceedings Volumes* 17(2), 1603–1608, 1984.
+28. J. B. Rawlings, D. Q. Mayne, M. M. Diehl, *Model Predictive Control: Theory, Computation, and Design*, 2nd ed.,
+    Nob Hill Publishing, 2017: §1.5 and §5.5 (disturbance models, offset-free estimation).
+29. L. Grüne, "NMPC without terminal constraints", *IFAC Proceedings Volumes* 45(17), 1–13, 2012.
+    doi:10.3182/20120823-5-NL-3013.00030
+30. H. Homburger, J. Frey, S. Wirtensohn, M. Diehl, J. Reuter, "Millisecond NMPC for swing-up and stabilization of
+    the Furuta pendulum in real world", *IEEE Transactions on Control Systems Technology*, 2025.
+    doi:10.1109/TCST.2025.3616367
+31. G. F. Franklin, J. D. Powell, M. L. Workman, *Digital Control of Dynamic Systems*, 3rd ed., Addison-Wesley, 1998:
+    the chapter on sample-rate selection.
+32. G. Stein, "Respect the unstable", *IEEE Control Systems Magazine* 23(4), 12–25, 2003.
+33. J. T. Betts, *Practical Methods for Optimal Control and Estimation Using Nonlinear Programming*, 2nd ed., SIAM,
+    2010 (initial guesses by interpolation between the boundary conditions).
+34. R. A. Singer, "Estimating optimal tracking filter performance for manned maneuvering targets", *IEEE
+    Transactions on Aerospace and Electronic Systems* AES-6(4), 473–483, 1970.

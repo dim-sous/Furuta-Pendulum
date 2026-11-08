@@ -17,17 +17,19 @@ freely at the arm's tip. Everything is built from the physics up:
 - **Simulation.** The torque is held constant over each 1 ms controller sample and RK4 integrates in between;
   every run checks its energy balance.
 - **Controllers.** Open loop; two summed PIDs (pendulum and arm) whose gains are tuned by IPOPT on the
-  simulated closed loop; energy-based swing-up (Åström & Furuta 2000) handing over to the PID. Every controller
-  is capped at 0.05 N m, the real motor at 10 V.
+  simulated closed loop; energy-based swing-up (Åström & Furuta 2000) handing over to the PID; a nonlinear MPC
+  that swings up and balances in one law, with no switching. Every controller is capped at 0.05 N m, the real
+  motor at 10 V.
 - **Disturbances.** A short torque pulse (a tap) on the pendulum while it balances.
 - **Sensing.** The encoders' angles, rounded to whole counts, feed an extended Kalman filter whose estimate
   the controller can use instead of the true state; each experiment chooses.
+- **Comparisons.** Runs are saved and overlaid, e.g. the energy swing-up + PID against the NMPC on the same task.
 
 The equations, parameters, controller laws and their sources are in [METHODS.md](METHODS.md).
 
 ## Installation
 
-Needs [uv](https://docs.astral.sh/uv/), and `gcc` for the gain tuner only. From the project folder:
+Needs [uv](https://docs.astral.sh/uv/), and `gcc` for the gain tuner and the NMPC. From the project folder:
 
 ```
 uv sync
@@ -42,10 +44,14 @@ This creates `.venv/` with Python 3.13 (pinned in `.python-version`) and the exa
 uv run python run.py
 ```
 
-Simulates the experiments named in `config.RUN`, prints the key numbers of each, and writes a figure and a
-real-time video per experiment to `results/<controller>/<name>.png` and `.mp4`. Every parameter and setting
-lives in `config.py`. An experiment (`config.EXPERIMENTS`) is an initial state, a duration, friction on or off,
-a controller with its settings, and optionally a disturbance; `RUN = list(EXPERIMENTS)` runs them all.
+Simulates the experiments named in `config.RUN`, prints the key numbers of each, and writes a figure, a
+real-time video and the time series per experiment to `results/<controller>/<name>.png`, `.mp4` and `.npz`.
+Every parameter and setting lives in `config.py`. An experiment (`config.EXPERIMENTS`) is an initial state, a
+duration, friction on or off, a controller with its settings, and optionally a disturbance;
+`RUN = list(EXPERIMENTS)` runs them all. Overlays of saved runs (`config.COMPARE`) go to
+`results/compare/<name>.png`, drawn once all of a comparison's runs exist. The NMPC compiles its solver with
+`gcc` on first use (about 2 min and 2 GB of memory, cached in the system's temporary folder); a 10 s NMPC run
+then takes 1–2.5 min.
 
 ```
 uv run python tune.py
@@ -67,11 +73,11 @@ and video, and `run.py` ends by listing the failed runs, with exit status 1. The
 |---|---|
 | `config.py` | every parameter and setting: plant, torque cap, PID gains, tuning, swing-up, experiments |
 | `model.py` | the plant: kinematics, Lagrangian, equations of motion, friction, RK4 step |
-| `control.py` | controllers (`open_loop`, `pid`, `swing_up`) and the PID law shared with the tuner |
+| `control.py` | controllers (`open_loop`, `pid`, `swing_up`, `nmpc`) and the PID law shared with the tuner |
 | `estimator.py` | the extended Kalman filter on the encoder angles |
 | `run.py` | simulation loop, checks, key numbers |
 | `tune.py` | PID gain tuning by optimization |
-| `viz.py` | figures and videos |
+| `viz.py` | figures, videos and overlays of runs |
 | `METHODS.md` | model, numerics and controllers, with references |
 | `media/` | the GIF above |
 
@@ -80,7 +86,9 @@ and video, and `run.py` ends by listing the failed runs, with exit status 1. The
 - Simulation only; no hardware.
 - The encoders are ideal apart from their resolution: no electrical noise, missed counts or delay.
 - The EKF's angle uncertainty is about 1.6 times too small: its single-Gaussian belief counts a repeated
-  encoder reading as new information (see METHODS.md, section 7).
+  encoder reading as new information (see METHODS.md, section 7). Under the NMPC, whose smoother torque leaves
+  the pendulum longer on one reading, its margin to failure is thin.
+- With the EKF, taps above 5 mN m break the estimate, for every controller: the filter has no model of them.
 - The motor is a pure torque source: its electrical dynamics and back-EMF are not modelled.
 - The pendulum joint has viscous friction only; Quanser publishes no Coulomb value for it.
 
@@ -95,6 +103,9 @@ The main sources; the full list is in [METHODS.md](METHODS.md#references).
   nonlinear optimization and optimal control", *Mathematical Programming Computation* 11(1), 1–36, 2019.
 - A. Wächter, L. T. Biegler, "On the implementation of an interior-point filter line-search algorithm for
   large-scale nonlinear programming", *Mathematical Programming* 106(1), 25–57, 2006.
+- H. Homburger, J. Frey, S. Wirtensohn, M. Diehl, J. Reuter, "Millisecond NMPC for swing-up and stabilization of
+  the Furuta pendulum in real world", *IEEE Transactions on Control Systems Technology*, 2025.
+  doi:10.1109/TCST.2025.3616367
 
 ## License
 

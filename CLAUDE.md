@@ -9,9 +9,10 @@ Where this file and that doc disagree, this file wins: it records the user's lat
 
 Current: first-principles model, open-loop simulations, PID control (pendulum and arm loops, summed) with gains
 tuned by optimization, swing-up by energy control handing over to the PID, disturbance (tap) experiments,
-an EKF on the quantized encoder angles that the controller can see instead of the true state, friction
-identification (step 1: steady-state friction curve by least squares; step 2a: the EKF likelihood surface),
-plots, videos.
+an EKF on the quantized encoder angles that the controller can see instead of the true state (optionally with a
+push state, off), friction identification (step 1: steady-state friction curve by least squares; step 2a: the EKF
+likelihood surface), a nonlinear MPC that swings up and balances in one law (IPOPT, compiled and cached), plots,
+videos, overlays of saved runs.
 Nothing else.
 
 Work grows in increments the user picks. The doc's stage order ("work through the stages in order") does
@@ -32,24 +33,28 @@ an increment is done, show its results (plots, key numbers) and ask what comes n
 Flat files in the project root (media/ is the one folder in git). A file is created only when the work needs it.
 
 ```
-config.py    every parameter and setting: plant, MAX_TORQUE, PID gains, TUNE, SWING_UP, ENCODER_RESOLUTION, EKF,
-             SYSID, FRICTION_ID, LIKELIHOOD, SYSID_RUN,
+config.py    every parameter and setting: plant, MAX_TORQUE, PID gains, TUNE, SWING_UP, NMPC, ENCODER_RESOLUTION,
+             EKF, SYSID, FRICTION_ID, LIKELIHOOD, SYSID_RUN,
              EXPERIMENTS (named test matrix; each names its controller and that controller's settings, and what
-             the controller sees: the true state or the EKF's estimate) + RUN, output
+             the controller sees: the true state or the EKF's estimate) + RUN, COMPARE (overlays), output
 model.py     plant: kinematics -> Lagrangian -> equations of motion (CasADi), friction, RK4 step
-control.py   controllers (open_loop, pid, swing_up), chosen per experiment; pid_step, the PID formula as a CasADi
-             function, shared by the simulation and the tuner
+control.py   controllers (open_loop, pid, swing_up, nmpc), chosen per experiment; pid_step, the PID formula as a
+             CasADi function, shared by the simulation and the tuner; nmpc's solver compiled once and cached in the
+             system temp folder (compiles one at a time, under a lock)
 estimator.py continuous-discrete EKF on the encoder angles (its arm friction: identified, config.FRICTION_ID); its update
              conditions on the count cell (truncated bivariate normal, Owen's T)
-run.py       simulation loop per experiment, encoder, checks (incl. the EKF surprise check), NEES, key numbers
+run.py       simulation loop per experiment, encoder, checks (incl. the EKF surprise check), NEES, key numbers;
+             saves each run's time series (.npz) and draws the COMPARE overlays from them
 tune.py      PID gain tuning: IPOPT on the closed loop rolled out in CasADi; prints gains to paste
 sysid.py     friction identification, methods chosen by config.SYSID_RUN: steady_state (torque staircase,
              least squares; prints FRICTION_ID) and likelihood_grid (EKF likelihood surface over (b, tau_C))
-viz.py       figures (PNG) and videos (MP4), written to results/<controller>/ (gitignored)
+viz.py       figures (PNG) and videos (MP4), written to results/<controller>/ (gitignored); overlays of saved
+             runs, written to results/compare/
 README.md    orients a visitor: what it is, how to install, run and check it, layout, limitations, license
 METHODS.md   model, numerics, each controller's law, with references (public)
 FINDINGS.md  our log: exercises, then dated results and investigations (private: gitignored, untracked)
 media/       the README's GIF (committed; results/ is not)
+references/  reference material: papers, literature digests (gitignored, untracked; user, 2026-11-08)
 LICENSE      MIT
 ```
 
@@ -65,6 +70,10 @@ uv run python tune.py    tune the PID gains (needs gcc: one closed-loop sample i
 uv run python sysid.py   identify the arm's friction (methods in config.SYSID_RUN; minutes of computing)
 uv add <package>         add a library, only when a feature first needs it
 ```
+
+Heavy batches (several NMPC runs in parallel processes) run inside a systemd scope with a total memory cap, e.g.
+`systemd-run --user --scope -p MemoryMax=4500M -p MemorySwapMax=0 ...`, at most ~6 at a time (each process
+~375 MB; a gcc compile ~2 GB): unbounded parallel runs took WSL down on 2026-11-08.
 
 ## Conventions
 

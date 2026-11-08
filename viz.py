@@ -1,4 +1,4 @@
-"""Figures (PNG) and videos (MP4) of a simulated run. Angles are shown in degrees, everything else in SI units.
+"""Figures (PNG) and videos (MP4) of a simulated run, and figures overlaying several runs. Angles are shown in degrees, everything else in SI units.
 
 Each entity (arm, pendulum, motor, energy, friction) keeps one colour in every figure and video, in a light
 variant for figures and a dark one for videos.
@@ -22,6 +22,10 @@ matplotlib.rcParams["animation.ffmpeg_path"] = imageio_ffmpeg.get_ffmpeg_exe()  
 LIGHT = dict(surface="#fcfcfb", ink="#0b0b0b", muted="#898781", grid="#e1e0d9", axis="#c3c2b7",
              arm="#2a78d6", pend="#eb6834", motor="#1baf7a", energy="#eda100", friction="#e87ba4", tap="#008300",
              estimator="#8a63d2", critical="#d03b3b")
+# Comparison figures overlay controllers, so there the controller is the entity: one categorical slot each, in a
+# fixed order (slots 1-3 of the reference palette, which stay apart for colour-blind readers in all pairs).
+CONTROLLERS = dict(swing_up=("energy swing-up + PID", "#2a78d6"), pid=("PID", "#2a78d6"), nmpc=("NMPC", "#eb6834"),
+                   open_loop=("open loop", "#1baf7a"))
 DARK = dict(surface="#1a1a19", ink="#f0efec", muted="#898781", grid="#2c2c2a", axis="#383835",
             arm="#3987e5", pend="#d95926", motor="#199e70", tap="#008300", critical="#d03b3b")
 
@@ -93,6 +97,49 @@ def figure(path, title, controller, t, x, u, d, E, motor_work, tap_work, frictio
         _estimation_panels(ax[6:], palette, fontsize, lw, t[:len(u)], estimates)
     ax[-1].set_xlabel("time [s]")
     _flag(ax[0], palette, fontsize, failed_checks, width=110)
+    fig.suptitle(title, color=palette["ink"], fontsize=13)
+    fig.savefig(path, dpi=150, facecolor=palette["surface"])
+    plt.close(fig)
+
+
+def comparison(path, title, runs):
+    """Runs overlaid, one colour per controller (CONTROLLERS): the pendulum's distance from upright (0 to 180 deg,
+    whichever way round), the arm angle, both rates, the motor torque (and the tap on the pendulum, dashed, if the
+    runs have one), and the motor work done so far. If every run saw the EKF, two more panels: its errors on the
+    pendulum's angle and rate. runs: {experiment name: its saved time series (run.py's .npz)}; failed checks of any
+    run are flagged at the top."""
+    palette, fontsize, lw = LIGHT, 10, 1.5
+    estimated = all("error" in r for r in runs.values())
+    n_panels = 8 if estimated else 6
+    fig, ax = plt.subplots(n_panels, 1, figsize=(10, 14 / 6 * n_panels), sharex=True, facecolor=palette["surface"],
+                           layout="constrained")
+    for a in ax:
+        _style(a, palette, fontsize)
+    for name, r in runs.items():
+        label, colour = CONTROLLERS[str(r["controller"])]
+        t, x = r["t"], r["x"]
+        ax[0].plot(t, np.rad2deg(np.abs(x[:, 1] % (2 * np.pi) - np.pi)), color=colour, lw=lw, label=label)
+        ax[1].plot(t, np.rad2deg(x[:, 0]), color=colour, lw=lw)
+        ax[2].plot(t, np.rad2deg(x[:, 2]), color=colour, lw=lw)
+        ax[3].plot(t, np.rad2deg(x[:, 3]), color=colour, lw=lw)
+        ax[4].stairs(r["u"], t, color=colour, lw=lw, baseline=None, label=label)
+        ax[5].plot(t, r["motor_work"], color=colour, lw=lw)
+        if estimated:
+            ax[6].plot(t[:len(r["error"])], np.rad2deg(r["error"][:, 1]), color=colour, lw=lw)
+            ax[7].plot(t[:len(r["error"])], np.rad2deg(r["error"][:, 3]), color=colour, lw=lw)
+    first = next(iter(runs.values()))
+    if first["d"].any():
+        ax[4].stairs(first["d"], first["t"], color=palette["tap"], lw=lw, ls="--", baseline=None,
+                     label="tap on the pendulum")
+    for a, ylabel in zip(ax, ["pendulum from upright [deg]", "arm θ [deg]", "arm θ̇ [deg/s]",
+                              "pendulum α̇ [deg/s]", "motor torque [N m]", "motor work [J]",
+                              "EKF error, pendulum α [deg]", "EKF error, pendulum α̇ [deg/s]"]):
+        a.set_ylabel(ylabel)
+    _legend(ax[0], palette, fontsize, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    _legend(ax[4], palette, fontsize, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    ax[-1].set_xlabel("time [s]")
+    _flag(ax[0], palette, fontsize, [f"{name}: {m}" for name, r in runs.items() for m in r["failed_checks"]],
+          width=110)
     fig.suptitle(title, color=palette["ink"], fontsize=13)
     fig.savefig(path, dpi=150, facecolor=palette["surface"])
     plt.close(fig)

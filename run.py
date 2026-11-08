@@ -1,6 +1,7 @@
 """Runs the experiments listed in config.RUN: simulates each one, checks it, prints the key numbers and saves a
-figure and a video per experiment to the results folder. A failed check is reported in the terminal and on the
-plots, and the remaining experiments still run."""
+figure, a video and its time series (.npz) per experiment to the results folder; then overlays the runs of each
+comparison in config.COMPARE that this call touched, from their saved time series. A failed check is reported in
+the terminal and on the plots, and the remaining experiments still run."""
 import sys
 from pathlib import Path
 
@@ -117,13 +118,21 @@ def main():
             controller = control.swing_up(e["gains"], **s, dt=c.DT)
             label = (f"energy swing-up, k = {s['k']:g} N m/J; PID from {np.rad2deg(s['enter']):g}° of upright, "
                      f"back beyond {np.rad2deg(s['leave']):g}°; |u| ≤ {c.MAX_TORQUE:g} N m")
+        elif e["controller"] == "nmpc":
+            s = e["nmpc"]
+            controller = control.nmpc(**s, dt=c.DT)
+            label = (f"NMPC every {1e3 * s['period']:g} ms, horizon {s['horizon']:g} s; "
+                     f"scales: pendulum {np.rad2deg(s['max_pendulum_error']):g}°, "
+                     f"arm {np.rad2deg(s['max_arm_error']):g}°, torque {s['max_torque']:g} N m, "
+                     f"change {s['max_torque_change']:g} N m per sample; |u| ≤ {c.MAX_TORQUE:g} N m")
         else:
             raise ValueError(f"{name}: unknown controller {e['controller']!r}")
         state = e.get("state", "true")
         if state == "ekf":
             settings = c.EKF
             estimate = estimator.ekf(settings["friction_arm"], settings["friction_pend"], settings["Q_c"],
-                                     settings["P0_std"], c.ENCODER_RESOLUTION, c.DT, c.RK4_SUBSTEPS)
+                                     settings["P0_std"], c.ENCODER_RESOLUTION, c.DT, c.RK4_SUBSTEPS,
+                                     settings["disturbance"])
         elif state == "true":
             estimate = None
         else:
@@ -131,8 +140,9 @@ def main():
         t, x, u, motor_work, friction_loss, d, tap_work, estimates = simulate(
             e["x0"], e["t_end"], controller, e["friction"], c.DT, c.RK4_SUBSTEPS,
             e.get("disturbance", lambda t: 0.0), estimate)
-        # The checks report instead of stopping, so that a run that went wrong can still be looked at.
-        failed_checks = []
+        # The checks report instead of stopping, so that a run that went wrong can still be looked at. A controller
+        # may report its own failures first (the NMPC: solves that did not converge).
+        failed_checks = list(getattr(controller, "failures", []))
         finite = np.all(np.isfinite(x), axis=1)
         if not finite.all():  # e.g. a closed loop that is unstable at this sample rate: keep what came before
             k = np.argmin(finite)
@@ -170,8 +180,17 @@ def main():
         viz.figure(folder / f"{name}.png", title, label, t, x, u, d, E, motor_work, tap_work, friction_loss, residual,
                    failed_checks, estimates)
         viz.video(folder / f"{name}.mp4", title, label, t, x, u, d, failed_checks)
+        np.savez(folder / f"{name}.npz", controller=e["controller"], t=t, x=x, u=u, d=d, E=E, motor_work=motor_work,
+                 friction_loss=friction_loss, tap_work=tap_work, failed_checks=np.array(failed_checks, dtype=str),
+                 **({"x_hat": estimates["x_hat"], "error": estimates["error"]} if estimates else {}))
         if failed_checks:
             failed_runs.append(name)
+    for comparison, names in c.COMPARE.items():        # those touched by this call, once all their runs exist
+        paths = [out / c.EXPERIMENTS[n]["controller"] / f"{n}.npz" for n in names]
+        if set(names) & set(c.RUN) and all(path.exists() for path in paths):
+            (out / "compare").mkdir(exist_ok=True)
+            viz.comparison(out / "compare" / f"{comparison}.png", comparison.replace("_", " "),
+                           {n: dict(np.load(path)) for n, path in zip(names, paths)})
     if failed_runs:
         sys.exit(f"checks failed in {', '.join(failed_runs)}: see the messages above and the plots")
 
